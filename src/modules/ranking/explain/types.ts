@@ -8,8 +8,14 @@ export type DailyRecommendationRecord = {
   selected: boolean;
   finalScore: number;
   title?: string;
+  abstract?: string;
   publishedAt?: string;
+  url?: string;
   sources: RecommendationSourceValue[];
+  sourceIdentifiers?: Array<{
+    source: RecommendationSourceValue;
+    externalId: string;
+  }>;
   identifiers: {
     doi?: string;
     pmid?: string;
@@ -41,6 +47,7 @@ export type DailyRecommendationRecord = {
   };
   reasons: string[];
   journal?: {
+    name?: string;
     quartile?: string;
     impactScore?: number;
   };

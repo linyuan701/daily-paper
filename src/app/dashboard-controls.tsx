@@ -1,0 +1,206 @@
+"use client";
+
+import React, { type ChangeEvent } from "react";
+
+import {
+  clearDashboardFilters,
+  selectDashboardRun,
+  type DashboardFilterOptions,
+  type DashboardOperationsRun,
+  type DashboardQueryState,
+  type DashboardSort,
+  type DashboardView
+} from "./dashboard-state";
+
+const VIEW_OPTIONS: ReadonlyArray<{ value: DashboardView; label: string }> = [
+  { value: "today", label: "Today" },
+  { value: "saved", label: "Saved" },
+  { value: "dismissed", label: "Dismissed" },
+  { value: "promoted", label: "Promoted" },
+  { value: "all", label: "All" }
+];
+
+const SORT_OPTIONS: ReadonlyArray<{ value: DashboardSort; label: string }> = [
+  { value: "rank", label: "推荐顺序" },
+  { value: "score", label: "推荐分数" },
+  { value: "newest", label: "最新发表" },
+  { value: "oldest", label: "最早发表" }
+];
+
+export type DashboardControlsProps = {
+  state: DashboardQueryState;
+  options: DashboardFilterOptions;
+  runs: readonly DashboardOperationsRun[];
+  resultCount: number;
+  totalCount: number;
+  onChange: (next: DashboardQueryState) => void;
+  disabled?: boolean;
+};
+
+export function DashboardControls({
+  state,
+  options,
+  runs,
+  resultCount,
+  totalCount,
+  onChange,
+  disabled = false
+}: DashboardControlsProps) {
+  function update(patch: Partial<DashboardQueryState>) {
+    onChange({ ...state, ...patch });
+  }
+
+  function updateOptional(
+    key: "source" | "journal" | "tag",
+    event: ChangeEvent<HTMLSelectElement>
+  ) {
+    const value = event.target.value || undefined;
+    onChange({ ...state, [key]: value });
+  }
+
+  return (
+    <section className="dashboard-controls" aria-labelledby="dashboard-filters-title">
+      <div className="dashboard-view-tabs" aria-label="推荐视图">
+        {VIEW_OPTIONS.map((option) => (
+          <button
+            type="button"
+            key={option.value}
+            aria-pressed={state.view === option.value}
+            className={state.view === option.value ? "is-active" : undefined}
+            onClick={() => onChange(
+              option.value === "today"
+                ? selectDashboardRun({ ...state, view: "today" }, undefined)
+                : { ...state, view: option.value }
+            )}
+            disabled={disabled}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="dashboard-history-control">
+        <label htmlFor="dashboard-run">查看日期</label>
+        <select
+          id="dashboard-run"
+          value={state.runId ?? ""}
+          onChange={(event) => onChange(selectDashboardRun(state, event.target.value || undefined))}
+          disabled={disabled}
+        >
+          <option value="">今日（最新运行）</option>
+          {runs.map((run) => (
+            <option key={run.runId} value={run.runId}>
+              {run.runDate} · {runStatusLabel(run.status)}
+            </option>
+          ))}
+        </select>
+        {state.runId ? <strong className="historical-view-marker">正在查看历史结果</strong> : null}
+      </div>
+
+      <fieldset disabled={disabled}>
+        <legend id="dashboard-filters-title">筛选推荐</legend>
+        <label htmlFor="dashboard-search">
+          关键词
+          <input
+            id="dashboard-search"
+            type="search"
+            value={state.q}
+            placeholder="标题、摘要、标签或推荐原因"
+            onChange={(event) => update({ q: event.target.value })}
+          />
+        </label>
+        <FilterSelect
+          id="dashboard-source"
+          label="来源"
+          value={state.source}
+          options={options.sources}
+          onChange={(event) => updateOptional("source", event)}
+        />
+        <FilterSelect
+          id="dashboard-journal"
+          label="期刊"
+          value={state.journal}
+          options={options.journals}
+          onChange={(event) => updateOptional("journal", event)}
+        />
+        <FilterSelect
+          id="dashboard-tag"
+          label="标签"
+          value={state.tag}
+          options={options.tags}
+          onChange={(event) => updateOptional("tag", event)}
+        />
+        <label htmlFor="dashboard-feedback">
+          Feedback 状态
+          <select
+            id="dashboard-feedback"
+            value={state.feedback}
+            onChange={(event) => update({
+              feedback: event.target.value as DashboardQueryState["feedback"]
+            })}
+          >
+            <option value="all">全部</option>
+            <option value="none">未处理</option>
+            <option value="save">已保存</option>
+            <option value="dismiss">已忽略</option>
+            <option value="promote">已提升</option>
+          </select>
+        </label>
+        <label htmlFor="dashboard-sort">
+          排序
+          <select
+            id="dashboard-sort"
+            value={state.sort}
+            onChange={(event) => update({ sort: event.target.value as DashboardSort })}
+          >
+            {SORT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <button type="button" onClick={() => onChange(clearDashboardFilters(state))}>
+          清除筛选
+        </button>
+      </fieldset>
+
+      <p className="dashboard-result-count" role="status" aria-live="polite" aria-atomic="true">
+        显示 {resultCount} / {totalCount} 篇推荐
+      </p>
+    </section>
+  );
+}
+
+function FilterSelect({
+  id,
+  label,
+  value,
+  options,
+  onChange
+}: {
+  id: string;
+  label: string;
+  value?: string;
+  options: readonly string[];
+  onChange: (event: ChangeEvent<HTMLSelectElement>) => void;
+}) {
+  return (
+    <label htmlFor={id}>
+      {label}
+      <select id={id} value={value ?? ""} onChange={onChange}>
+        <option value="">全部</option>
+        {options.map((option) => (
+          <option key={option} value={option}>{option}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function runStatusLabel(status: DashboardOperationsRun["status"]) {
+  if (status === "complete_with_warnings") return "完成但有警告";
+  if (status === "complete") return "已完成";
+  if (status === "running") return "运行中";
+  if (status === "partial") return "部分完成";
+  if (status === "failed") return "失败";
+  return "状态未知";
+}

@@ -69,7 +69,10 @@ function toRecommendation(result: {
   canonicalCandidate: {
     id: string;
     title: string | null;
+    abstractNote: string | null;
     publishedAt: Date | null;
+    url: string | null;
+    journalName: string | null;
     doi: string | null;
     pmid: string | null;
     arxivId: string | null;
@@ -94,6 +97,7 @@ function toRecommendation(result: {
     }>;
     provenances: Array<{
       source: "BIORXIV" | "ARXIV" | "PUBMED" | "JOURNAL";
+      externalId: string;
       sourceCandidate: {
         journalEnrichment: {
           status: "ENRICHED" | "NOT_FOUND" | "FAILED";
@@ -119,8 +123,14 @@ function toRecommendation(result: {
     selected: result.selected,
     finalScore: result.finalScore,
     title: result.canonicalCandidate.title ?? undefined,
+    abstract: result.canonicalCandidate.abstractNote ?? undefined,
     publishedAt: result.canonicalCandidate.publishedAt?.toISOString(),
+    url: result.canonicalCandidate.url ?? undefined,
     sources,
+    sourceIdentifiers: result.canonicalCandidate.provenances.map((entry) => ({
+      source: fromDbSource(entry.source),
+      externalId: entry.externalId
+    })),
     identifiers: {
       doi: result.canonicalCandidate.doi ?? undefined,
       pmid: result.canonicalCandidate.pmid ?? undefined,
@@ -159,10 +169,11 @@ function toRecommendation(result: {
         : undefined
     },
     reasons: toReasons(result.reasonsJson),
-    journal: enriched
+    journal: result.canonicalCandidate.journalName || enriched
       ? {
-          quartile: enriched.quartile ?? undefined,
-          impactScore: enriched.impactScore ?? undefined
+          name: result.canonicalCandidate.journalName ?? undefined,
+          quartile: enriched?.quartile ?? undefined,
+          impactScore: enriched?.impactScore ?? undefined
         }
       : undefined
   };
