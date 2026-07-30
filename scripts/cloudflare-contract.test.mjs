@@ -1,6 +1,24 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
+
+async function collectRuntimeSources(directory, label) {
+  const files = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const entryLabel = `${label}/${entry.name}`;
+    if (entry.isDirectory()) {
+      if (entryLabel === "src/modules/diagnostics") {
+        continue;
+      }
+      files.push(
+        ...(await collectRuntimeSources(new URL(`${entry.name}/`, directory), entryLabel))
+      );
+    } else if (/\.(?:mjs|ts|tsx)$/.test(entry.name)) {
+      files.push({ label: entryLabel, url: new URL(entry.name, directory) });
+    }
+  }
+  return files;
+}
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const wrangler = await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8");
@@ -178,4 +196,29 @@ test("Cloud dashboard and APIs validate Access JWTs in the Worker", async () => 
   assert.match(verifier, /issuer: input\.teamDomain/);
   assert.match(verifier, /audience: input\.audience/);
   assert.match(verifier, /ACCESS_ALLOWED_EMAIL/);
+});
+
+test("source-ranking diagnostics stay outside the Worker runtime graph", async () => {
+  const runtimeSources = (
+    await Promise.all([
+      collectRuntimeSources(new URL("../src/app/", import.meta.url), "src/app"),
+      collectRuntimeSources(new URL("../src/jobs/", import.meta.url), "src/jobs"),
+      collectRuntimeSources(new URL("../src/modules/", import.meta.url), "src/modules")
+    ])
+  ).flat();
+  runtimeSources.push({
+    label: "src/middleware.ts",
+    url: new URL("../src/middleware.ts", import.meta.url)
+  });
+
+  const forbidden = /diagnostics\/source-ranking|source-ranking-audit/;
+  const imports = [];
+  for (const source of runtimeSources) {
+    if (forbidden.test(await readFile(source.url, "utf8"))) {
+      imports.push(source.label);
+    }
+  }
+
+  assert.deepEqual(imports, []);
+  assert.doesNotMatch(JSON.stringify(packageJson.scripts), forbidden);
 });

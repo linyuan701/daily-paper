@@ -204,6 +204,46 @@ test("saved and promoted hydrate together, remain active, and dismiss Undo resto
   expect(posts).toHaveLength(0);
 });
 
+test("combined Saved and Promoted state is filtered before the visible limit", async ({ page }) => {
+  const recommendations = paperSet(4, "triage");
+  const logs = recommendations.flatMap((recommendation, index) => {
+    const candidateId = String(recommendation.candidateId);
+    return [
+      {
+        id: `feedback-save-${index}`,
+        candidateId,
+        actionType: "save",
+        createdAt: `2026-07-30T00:0${index}:00.000Z`
+      },
+      {
+        id: `feedback-promote-${index}`,
+        candidateId,
+        actionType: "promote",
+        createdAt: `2026-07-30T00:1${index}:00.000Z`
+      }
+    ];
+  });
+  await installDashboardMocks(page, {
+    runs: [TODAY_RUN],
+    latestFeed: feed("run-today", recommendations),
+    logsByRunId: { "run-today": logs }
+  });
+
+  await page.goto("/?view=saved&limit=2");
+
+  await expect(page.getByRole("article")).toHaveCount(2);
+  await expect(page.getByRole("heading", { name: "triage paper 1" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "triage paper 2" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "triage paper 3" })).toHaveCount(0);
+  for (const card of await page.getByRole("article").all()) {
+    await expect(card.locator(".feedback-state-badge", { hasText: "Saved" })).toBeVisible();
+    await expect(card.locator(".feedback-state-badge", { hasText: "Promoted" })).toBeVisible();
+  }
+  await expect(page.locator(".dashboard-result-count")).toHaveText("显示 2 / 4 篇推荐");
+  expect(new URL(page.url()).searchParams.get("view")).toBe("saved");
+  expect(new URL(page.url()).searchParams.get("limit")).toBe("2");
+});
+
 test("visible limit is restored from the URL and quick options update the shareable state", async ({ page }) => {
   await installDashboardMocks(page, {
     runs: [TODAY_RUN],
@@ -283,6 +323,87 @@ test("a larger visible limit does not backfill recommendations missing from a hi
   await expect(page.getByRole("article")).toHaveCount(7);
   expect(new URL(page.url()).searchParams.get("limit")).toBe("30");
   expect(new URL(page.url()).searchParams.get("runId")).toBe("run-old");
+});
+
+test("a historical run restores its URL limit after direct navigation and refresh", async ({ page }) => {
+  const oldRun = run({
+    runId: "run-old",
+    runDate: "2026-07-28",
+    status: "complete",
+    finishedAt: "2026-07-28T00:20:00.000Z"
+  });
+  await installDashboardMocks(page, {
+    runs: [TODAY_RUN, oldRun],
+    latestFeed: feed("run-today", paperSet(20, "today")),
+    feedsByRunId: {
+      "run-old": feed("run-old", paperSet(10, "history"))
+    }
+  });
+
+  await page.goto("/?runId=run-old&limit=5");
+  await expect(page.getByRole("article")).toHaveCount(5);
+  await expect(page.getByText("正在查看历史结果", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "history paper 1" })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole("article")).toHaveCount(5);
+  await expect(page.getByText("正在查看历史结果", { exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("runId")).toBe("run-old");
+  expect(new URL(page.url()).searchParams.get("limit")).toBe("5");
+});
+
+test("a 30-paper feed can display five while the run status still reports 30", async ({ page }) => {
+  await installDashboardMocks(page, {
+    runs: [TODAY_RUN],
+    latestFeed: feed("run-today", paperSet(30, "generated"))
+  });
+
+  await page.goto("/?limit=5");
+
+  await expect(page.getByRole("article")).toHaveCount(5);
+  await expect(page.locator(".dashboard-status-grid").getByText("30 篇", { exact: true })).toBeVisible();
+  await expect(page.locator(".dashboard-result-count")).toHaveText("显示 5 / 30 篇推荐");
+  await expect(page.getByText("显示数量不会改变每日生成数量。")).toBeVisible();
+});
+
+test("a 10-paper feed with URL limit 30 displays only the ten available papers", async ({ page }) => {
+  await installDashboardMocks(page, {
+    runs: [TODAY_RUN],
+    latestFeed: feed("run-today", paperSet(10, "available"))
+  });
+
+  await page.goto("/?limit=30");
+
+  await expect(page.getByRole("article")).toHaveCount(10);
+  await expect(page.locator(".dashboard-status-grid").getByText("10 篇", { exact: true })).toBeVisible();
+  await expect(page.locator(".dashboard-result-count")).toHaveText("显示 10 / 10 篇推荐");
+  expect(new URL(page.url()).searchParams.get("limit")).toBe("30");
+});
+
+test("the dashboard remains usable when arXiv contributes no recommendations", async ({ page }) => {
+  await installDashboardMocks(page, {
+    runs: [run({
+      runId: "run-today",
+      runDate: "2026-07-30",
+      status: "complete_with_warnings",
+      sourceDegradation: {
+        degraded: true,
+        sources: [{ source: "arxiv", status: "failed", error: "rate_limited" }]
+      }
+    })],
+    latestFeed: feed("run-today", [
+      paper({ candidateId: "pubmed-only", title: "PubMed-only recommendation", sources: ["pubmed"] })
+    ])
+  });
+
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: "PubMed-only recommendation" })).toBeVisible();
+  await expect(page.locator(".dashboard-status")).toHaveClass(/status-warning/);
+  await expect(page.locator(".dashboard-status")).toContainText("arxiv");
+  await expect(page.locator("#dashboard-source option")).toHaveCount(2);
+  await expect(page.locator("#dashboard-source option").nth(1)).toHaveText("pubmed");
+  await expect(page.locator(".dashboard-message[role='alert']")).toHaveCount(0);
 });
 
 test("dismiss removes immediately and sends one POST after five seconds", async ({ page }) => {
