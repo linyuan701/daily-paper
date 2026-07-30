@@ -710,6 +710,53 @@ main {
   font-weight: 650;
 }
 
+.dashboard-controls .dashboard-visible-limit {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.dashboard-limit-options,
+.dashboard-limit-manual {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.dashboard-limit-options button.is-active,
+.dashboard-limit-options button[aria-pressed="true"] {
+  border-color: #164f7d;
+  background: #164f7d;
+  color: #fff;
+  font-weight: 700;
+}
+
+.dashboard-limit-manual label {
+  min-width: 9rem;
+}
+
+.dashboard-limit-manual input {
+  width: 7rem;
+}
+
+.dashboard-limit-current,
+.dashboard-limit-error {
+  flex: 1 1 16rem;
+  margin: 0;
+  font-size: 0.84rem;
+}
+
+.dashboard-limit-current {
+  color: #52636a;
+}
+
+.dashboard-limit-error {
+  color: #9f1d1d;
+  font-weight: 700;
+}
+
 .dashboard-history-control select,
 .dashboard-controls input,
 .dashboard-controls select {
@@ -1195,6 +1242,19 @@ main {
 
   .dashboard-controls fieldset {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-controls .dashboard-visible-limit,
+  .dashboard-limit-options,
+  .dashboard-limit-manual {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dashboard-limit-options button,
+  .dashboard-limit-manual input,
+  .dashboard-limit-manual button {
+    width: 100%;
   }
 
   .dashboard-controls fieldset button,

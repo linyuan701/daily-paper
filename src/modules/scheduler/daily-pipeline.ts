@@ -1,5 +1,6 @@
 import { logger } from "../../lib/logging";
 import { AppError } from "../../lib/errors";
+import { getEnv } from "../../lib/config";
 import { createJournalEnrichmentService } from "../candidate-enrich";
 import {
   createDailyIngestionService,
@@ -49,6 +50,7 @@ export async function runDailyRecommendationPipeline(input?: {
   sources?: DailySchedulerSource[];
 }): Promise<DailyPipelineRunSummary> {
   const startedAt = new Date();
+  const configuredRecommendationLimit = getEnv().DAILY_RECOMMENDATION_LIMIT;
   const sourceList = input?.sources?.length
     ? input.sources
     : (["biorxiv", "arxiv", "pubmed", "journal"] as const);
@@ -146,6 +148,19 @@ export async function runDailyRecommendationPipeline(input?: {
       persistedStages = await stageStatus.list(runId);
     }
     const resumeStage = findDailyResumeStage(persistedStages) ?? "enrichment";
+    const persistedRecommendationLimit = recommendationLimitFromStages(persistedStages);
+    let recommendationLimit = persistedRecommendationLimit ?? configuredRecommendationLimit;
+    const completedRerankWithoutLimit = persistedRecommendationLimit === undefined &&
+      persistedStages.some((stage) => stage.stage === "rerank" && stage.status === "success");
+    if (completedRerankWithoutLimit) {
+      const persistedRerank = await rerank.getLatestRerankRun(runId);
+      if (
+        persistedRerank?.run.status === "success" &&
+        isRecommendationLimit(persistedRerank.run.requestedTopN)
+      ) {
+        recommendationLimit = persistedRerank.run.requestedTopN;
+      }
+    }
     const shouldRun = (stage: DailyPipelineStageValue) =>
       STAGE_ORDER.indexOf(stage) >= STAGE_ORDER.indexOf(resumeStage);
 
@@ -202,14 +217,26 @@ export async function runDailyRecommendationPipeline(input?: {
     activeStage = "rerank";
     if (shouldRun(activeStage)) {
       await stageStatus.start({ runId, attempt: activeAttempt!, stage: activeStage });
-      const rerankResult = await rerank.runRerank({ runId, topN: 20 });
-      await stageStatus.complete({ runId, attempt: activeAttempt!, stage: activeStage, details: { rerankRunId: rerankResult.run.id } });
+      const rerankResult = await rerank.runRerank({ runId, topN: recommendationLimit });
+      await stageStatus.complete({
+        runId,
+        attempt: activeAttempt!,
+        stage: activeStage,
+        details: {
+          rerankRunId: rerankResult.run.id,
+          recommendationLimit
+        }
+      });
     }
 
     activeStage = "summary";
     if (shouldRun(activeStage)) {
       await stageStatus.start({ runId, attempt: activeAttempt!, stage: activeStage });
-      const summaries = await summarize.generateSummariesForRun({ runId, limit: 20, selectedOnly: true });
+      const summaries = await summarize.generateSummariesForRun({
+        runId,
+        limit: recommendationLimit,
+        selectedOnly: true
+      });
       await stageStatus.complete({
         runId,
         attempt: activeAttempt!,
@@ -338,6 +365,17 @@ export async function runDailyRecommendationPipeline(input?: {
     sources: results,
     stages: persistedStages
   } satisfies DailyPipelineRunSummary;
+}
+
+function recommendationLimitFromStages(stages: DailyPipelineStageRecord[]): number | undefined {
+  const persistedLimit = stages.find((stage) => stage.stage === "rerank")
+    ?.details?.recommendationLimit;
+
+  return isRecommendationLimit(persistedLimit) ? persistedLimit : undefined;
+}
+
+function isRecommendationLimit(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 30;
 }
 
 function extractRunId(error: unknown) {

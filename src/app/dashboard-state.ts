@@ -8,6 +8,10 @@ export const DASHBOARD_FEEDBACK_FILTERS = ["all", "none", "save", "dismiss", "pr
 export type DashboardFeedbackFilter = (typeof DASHBOARD_FEEDBACK_FILTERS)[number];
 export type DashboardFeedbackAction = Exclude<DashboardFeedbackFilter, "all" | "none">;
 
+export const DASHBOARD_VISIBLE_LIMIT_OPTIONS = [5, 10, 15, 20, 25, 30] as const;
+export const MAX_DASHBOARD_VISIBLE_LIMIT = 30;
+export const DEFAULT_MAX_DASHBOARD_VISIBLE_LIMIT = 20;
+
 export type DashboardQueryState = {
   runId?: string;
   view: DashboardView;
@@ -17,6 +21,7 @@ export type DashboardQueryState = {
   tag?: string;
   feedback: DashboardFeedbackFilter;
   sort: DashboardSort;
+  limit?: number;
 };
 
 export const DEFAULT_DASHBOARD_QUERY: Readonly<DashboardQueryState> = {
@@ -109,6 +114,7 @@ export function parseDashboardQuery(input: string | SearchParamsLike): Dashboard
     DEFAULT_DASHBOARD_QUERY.feedback
   );
   const sort = parseEnum(params.get("sort"), DASHBOARD_SORTS, DEFAULT_DASHBOARD_QUERY.sort);
+  const limit = parseDashboardVisibleLimit(params.get("limit"));
 
   return {
     ...optionalParam("runId", params.get("runId")),
@@ -118,7 +124,8 @@ export function parseDashboardQuery(input: string | SearchParamsLike): Dashboard
     ...optionalParam("journal", params.get("journal")),
     ...optionalParam("tag", params.get("tag")),
     feedback,
-    sort
+    sort,
+    ...(limit ? { limit } : {})
   };
 }
 
@@ -132,7 +139,21 @@ export function serializeDashboardQuery(state: DashboardQueryState): URLSearchPa
   setIfPresent(params, "tag", state.tag);
   if (state.feedback !== DEFAULT_DASHBOARD_QUERY.feedback) params.set("feedback", state.feedback);
   if (state.sort !== DEFAULT_DASHBOARD_QUERY.sort) params.set("sort", state.sort);
+  const limit = normalizeDashboardVisibleLimit(state.limit);
+  if (limit) params.set("limit", String(limit));
   return params;
+}
+
+export function resolveDashboardVisibleLimit(
+  configuredLimit: number | undefined,
+  actualSelectedCount: number
+): number {
+  return normalizeDashboardVisibleLimit(configuredLimit) ??
+    Math.min(Math.max(0, Math.trunc(actualSelectedCount)), DEFAULT_MAX_DASHBOARD_VISIBLE_LIMIT);
+}
+
+export function applyDashboardVisibleLimit<T>(recommendations: readonly T[], limit: number): T[] {
+  return recommendations.slice(0, Math.max(0, Math.trunc(limit)));
 }
 
 export function selectDashboardRun(
@@ -172,8 +193,9 @@ export function filterAndSortRecommendations<T extends DashboardRecommendation>(
 
   return recommendations
     .filter((item) => {
+      if (item.selected === false) return false;
       const feedback = feedbackByCandidate[item.candidateId];
-      if (!matchesView(state.view, feedback, item.selected)) return false;
+      if (!matchesView(state.view, feedback)) return false;
       if (!matchesFeedback(state.feedback, feedback)) return false;
       if (source && !item.sources?.some((value) => normalizeForMatch(value) === source)) return false;
       if (journal && normalizeForMatch(item.journal?.name) !== journal) return false;
@@ -192,6 +214,7 @@ export function getDashboardFilterOptions(
   const tags = new Set<string>();
 
   for (const item of recommendations) {
+    if (item.selected === false) continue;
     for (const source of item.sources ?? []) addNonEmpty(sources, source);
     addNonEmpty(journals, item.journal?.name);
     for (const tag of recommendationTags(item)) addNonEmpty(tags, tag);
@@ -257,10 +280,9 @@ const RUN_STATUS_PRESENTATION: Record<
 
 function matchesView(
   view: DashboardView,
-  feedback: DashboardFeedbackAction | undefined,
-  selected: boolean | undefined
+  feedback: DashboardFeedbackAction | undefined
 ) {
-  if (view === "today") return selected !== false && feedback !== "dismiss";
+  if (view === "today") return feedback !== "dismiss";
   if (view === "saved") return feedback === "save";
   if (view === "dismissed") return feedback === "dismiss";
   if (view === "promoted") return feedback === "promote";
@@ -346,6 +368,18 @@ function dateValue(value: string | undefined) {
 
 function parseEnum<T extends string>(value: string | null, values: readonly T[], fallback: T): T {
   return values.includes(value as T) ? (value as T) : fallback;
+}
+
+function parseDashboardVisibleLimit(value: string | null): number | undefined {
+  const normalized = value?.trim();
+  if (!normalized || !/^\d+$/.test(normalized)) return undefined;
+  return normalizeDashboardVisibleLimit(Number(normalized));
+}
+
+function normalizeDashboardVisibleLimit(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isInteger(value) && value >= 1 && value <= MAX_DASHBOARD_VISIBLE_LIMIT
+    ? value
+    : undefined;
 }
 
 function normalizeParam(value: string | null | undefined) {

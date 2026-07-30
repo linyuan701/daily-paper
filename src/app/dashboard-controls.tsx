@@ -1,9 +1,12 @@
 "use client";
 
-import React, { type ChangeEvent } from "react";
+import React, { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 
 import {
   clearDashboardFilters,
+  DASHBOARD_VISIBLE_LIMIT_OPTIONS,
+  MAX_DASHBOARD_VISIBLE_LIMIT,
+  resolveDashboardVisibleLimit,
   selectDashboardRun,
   type DashboardFilterOptions,
   type DashboardOperationsRun,
@@ -33,6 +36,7 @@ export type DashboardControlsProps = {
   runs: readonly DashboardOperationsRun[];
   resultCount: number;
   totalCount: number;
+  selectedRecommendationCount: number;
   onChange: (next: DashboardQueryState) => void;
   disabled?: boolean;
 };
@@ -43,11 +47,34 @@ export function DashboardControls({
   runs,
   resultCount,
   totalCount,
+  selectedRecommendationCount,
   onChange,
   disabled = false
 }: DashboardControlsProps) {
+  const automaticVisibleLimit = resolveDashboardVisibleLimit(undefined, selectedRecommendationCount);
+  const visibleLimit = resolveDashboardVisibleLimit(state.limit, selectedRecommendationCount);
+  const [manualLimit, setManualLimit] = useState(visibleLimit > 0 ? String(visibleLimit) : "");
+  const [limitError, setLimitError] = useState<string>();
+
+  useEffect(() => {
+    setManualLimit(visibleLimit > 0 ? String(visibleLimit) : "");
+    setLimitError(undefined);
+  }, [visibleLimit]);
+
   function update(patch: Partial<DashboardQueryState>) {
     onChange({ ...state, ...patch });
+  }
+
+  function applyManualLimit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalized = manualLimit.trim();
+    const parsed = Number(normalized);
+    if (!/^\d+$/.test(normalized) || !Number.isInteger(parsed) || parsed < 1 || parsed > MAX_DASHBOARD_VISIBLE_LIMIT) {
+      setLimitError(`请输入 1–${MAX_DASHBOARD_VISIBLE_LIMIT} 之间的整数。`);
+      return;
+    }
+    setLimitError(undefined);
+    update({ limit: parsed });
   }
 
   function updateOptional(
@@ -161,6 +188,60 @@ export function DashboardControls({
         <button type="button" onClick={() => onChange(clearDashboardFilters(state))}>
           清除筛选
         </button>
+      </fieldset>
+
+      <fieldset className="dashboard-visible-limit" disabled={disabled}>
+        <legend>页面显示数量</legend>
+        <div className="dashboard-limit-options" aria-label="推荐显示数量快捷选项">
+          <button
+            type="button"
+            aria-pressed={state.limit === undefined}
+            className={state.limit === undefined ? "is-active" : undefined}
+            onClick={() => update({ limit: undefined })}
+          >
+            自动（{automaticVisibleLimit}）
+          </button>
+          {DASHBOARD_VISIBLE_LIMIT_OPTIONS.map((limit) => (
+            <button
+              type="button"
+              key={limit}
+              aria-pressed={state.limit === limit}
+              className={state.limit === limit ? "is-active" : undefined}
+              onClick={() => update({ limit })}
+            >
+              {limit}
+            </button>
+          ))}
+        </div>
+        <form className="dashboard-limit-manual" onSubmit={applyManualLimit} noValidate>
+          <label htmlFor="dashboard-limit">
+            手动输入 1–30
+            <input
+              id="dashboard-limit"
+              type="number"
+              min="1"
+              max="30"
+              step="1"
+              inputMode="numeric"
+              placeholder="1–30"
+              value={manualLimit}
+              aria-invalid={Boolean(limitError)}
+              aria-describedby={limitError ? "dashboard-limit-error" : "dashboard-limit-current"}
+              onChange={(event) => {
+                setManualLimit(event.target.value);
+                setLimitError(undefined);
+              }}
+            />
+          </label>
+          <button type="submit">应用</button>
+        </form>
+        <p id="dashboard-limit-current" className="dashboard-limit-current" aria-live="polite">
+          当前最多显示 {visibleLimit} 篇；可用结果不足时不会补齐。
+        </p>
+        <p className="dashboard-limit-boundary">
+          显示数量不会改变每日生成数量。
+        </p>
+        {limitError ? <p id="dashboard-limit-error" className="dashboard-limit-error" role="alert">{limitError}</p> : null}
       </fieldset>
 
       <p className="dashboard-result-count" role="status" aria-live="polite" aria-atomic="true">

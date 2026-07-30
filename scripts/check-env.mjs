@@ -19,6 +19,14 @@ export function parseBoolean(value) {
   return null;
 }
 
+export function parseRecommendationLimit(value) {
+  const normalized = value?.trim();
+  if (!normalized) return 20;
+  if (!/^\d+$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 30 ? parsed : null;
+}
+
 export function resolveDeploymentMode(env) {
   const configured = env.DEPLOYMENT_MODE?.trim().toLowerCase();
   if (!configured) return { mode: "local" };
@@ -39,6 +47,11 @@ export function inspectRuntimeEnvironment(env) {
 
   const { mode } = deployment;
   checks.push(result("ready", "deployment_mode", `Deployment mode is ${mode}.`));
+
+  const recommendationLimit = parseRecommendationLimit(env.DAILY_RECOMMENDATION_LIMIT);
+  checks.push(recommendationLimit === null
+    ? result("error", "daily_recommendation_limit", "DAILY_RECOMMENDATION_LIMIT must be an integer between 1 and 30.")
+    : result("ready", "daily_recommendation_limit", `Daily recommendation selection limit is ${recommendationLimit}.`));
 
   const databaseUrl = env.DATABASE_URL?.trim();
   if (!databaseUrl) {

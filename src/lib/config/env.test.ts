@@ -9,6 +9,7 @@ describe("deployment environment contract", () => {
     expect(env.DEPLOYMENT_MODE).toBe("local");
     expect(env.CAPABILITIES).toEqual(getDeploymentCapabilities("local"));
     expect(env.DAILY_RUN_STALE_AFTER_MINUTES).toBe(180);
+    expect(env.DAILY_RECOMMENDATION_LIMIT).toBe(20);
     expect(env.CAPABILITIES).toMatchObject({
       sqlite: true,
       postgresql: false,
@@ -17,6 +18,23 @@ describe("deployment environment contract", () => {
       obsidianFilesystem: true,
       desktopNotification: true
     });
+  });
+
+  it.each(["1", "20", "30"])("accepts DAILY_RECOMMENDATION_LIMIT=%s in Local and Cloud Mode", (limit) => {
+    expect(loadEnv({ DATABASE_URL: "file:./dev.db", DAILY_RECOMMENDATION_LIMIT: limit }).DAILY_RECOMMENDATION_LIMIT).toBe(Number(limit));
+    expect(loadEnv({
+      DEPLOYMENT_MODE: "cloud",
+      DATABASE_URL: "postgresql://user:secret@example.invalid/daily_paper",
+      ZOTERO_TRANSPORT: "web",
+      ZOTERO_ID: "1234",
+      ZOTERO_KEY: "secret",
+      DAILY_RECOMMENDATION_LIMIT: limit
+    }).DAILY_RECOMMENDATION_LIMIT).toBe(Number(limit));
+  });
+
+  it.each(["0", "31", "1.5", "paper"])("rejects invalid DAILY_RECOMMENDATION_LIMIT=%s", (limit) => {
+    expect(() => loadEnv({ DATABASE_URL: "file:./dev.db", DAILY_RECOMMENDATION_LIMIT: limit }))
+      .toThrowError("DAILY_RECOMMENDATION_LIMIT must be an integer between 1 and 30");
   });
 
   it("accepts the explicit Cloud Mode contract", () => {

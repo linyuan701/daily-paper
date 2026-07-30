@@ -75,6 +75,7 @@ CLI wrappers:
 - `npm run job:scheduler-loop`
 
 Scheduler env knobs:
+- `DAILY_RECOMMENDATION_LIMIT` — strict integer `1`–`30`, default `20`; controls final rerank selection and summary/persisted feed/notification cardinality without shrinking the Recall Top 100 or rerank candidate pool
 - `APP_BASE_URL`
 - `SCHEDULER_DAILY_UTC_HOUR`
 - `SCHEDULER_MONTHLY_UTC_DAY`
@@ -84,6 +85,10 @@ Scheduler env knobs:
 ## Cloud Mode daily execution
 
 Cloud Mode keeps the Windows/SQLite path intact and runs the persisted daily pipeline directly in GitHub Actions against an empty managed PostgreSQL database. The committed workflow is `.github/workflows/daily.yml`; it does not call the Next.js or Cloudflare daily API.
+
+The Cloud CLI accepts `DAILY_RECOMMENDATION_LIMIT` through its process environment with the same strict validation as Local Mode. The production workflow mapping remains intentionally unchanged while the v0.2 scheduled-notification acceptance gate is open, so its effective value stays at the default `20` until that separate deployment setting is approved.
+
+`DAILY_RECOMMENDATION_LIMIT` is the pipeline generation limit. The Dashboard `limit=1..30` URL parameter is only a visible-item limit for recommendations already present in the selected feed: **显示数量不会改变每日生成数量**. A Dashboard URL can neither change the scheduler environment nor generate missing recommendations for a historical run.
 
 Setup summary:
 
