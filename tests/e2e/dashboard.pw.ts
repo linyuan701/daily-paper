@@ -153,6 +153,56 @@ test("URL query filters are restored after refresh", async ({ page }) => {
   await assertRestoredFilters(page);
 });
 
+test("saved and promoted hydrate together, remain active, and dismiss Undo restores both", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-07-30T00:00:00.000Z") });
+  const posts: JsonRecord[] = [];
+  await installDashboardMocks(page, {
+    runs: [TODAY_RUN],
+    latestFeed: feed("run-today", [paper()]),
+    logsByRunId: {
+      "run-today": [
+        {
+          id: "feedback-save",
+          candidateId: "candidate-a",
+          actionType: "save",
+          createdAt: "2026-07-30T00:01:00.000Z"
+        },
+        {
+          id: "feedback-promote",
+          candidateId: "candidate-a",
+          actionType: "promote",
+          createdAt: "2026-07-30T00:02:00.000Z"
+        }
+      ]
+    },
+    feedbackAction: async (body) => {
+      posts.push(body);
+      return { body: { status: "ok" } };
+    }
+  });
+
+  await page.goto("/?view=saved");
+  let card = page.getByRole("article", { name: "A traceable paper" });
+  const save = card.getByRole("button", { name: "收藏" });
+  const promote = card.getByRole("button", { name: "优先阅读" });
+  await expect(save).toHaveAttribute("aria-pressed", "true");
+  await expect(promote).toHaveAttribute("aria-pressed", "true");
+  await expect(card.locator(".feedback-state-badge", { hasText: "Saved" })).toBeVisible();
+  await expect(card.locator(".feedback-state-badge", { hasText: "Promoted" })).toBeVisible();
+
+  await save.click();
+  await promote.click();
+  expect(posts).toHaveLength(0);
+
+  await card.getByRole("button", { name: "不感兴趣" }).click();
+  await expect(card).toHaveCount(0);
+  await page.getByRole("button", { name: "Undo" }).click();
+  card = page.getByRole("article", { name: "A traceable paper" });
+  await expect(card.getByRole("button", { name: "收藏" })).toHaveAttribute("aria-pressed", "true");
+  await expect(card.getByRole("button", { name: "优先阅读" })).toHaveAttribute("aria-pressed", "true");
+  expect(posts).toHaveLength(0);
+});
+
 test("dismiss removes immediately and sends one POST after five seconds", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-07-30T00:00:00.000Z") });
   const posts: JsonRecord[] = [];

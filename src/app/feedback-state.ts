@@ -2,13 +2,19 @@ export type TriageAction = "save" | "dismiss" | "promote";
 
 export type FeedbackRequestStatus = "idle" | "pending" | "success" | "failure";
 
+export type FeedbackProjection = {
+  saved: boolean;
+  promoted: boolean;
+  dismissed: boolean;
+};
+
 export type CandidateFeedbackState = {
-  /** The action currently reflected by the UI, including optimistic changes. */
-  action?: TriageAction;
-  /** The latest action known to have been persisted by the API. */
-  persistedAction?: TriageAction;
+  /** The full state currently reflected by the UI, including optimistic changes. */
+  current: FeedbackProjection;
+  /** The full state known to have been persisted by the API. */
+  persisted: FeedbackProjection;
   pendingAction?: TriageAction;
-  previousAction?: TriageAction;
+  previous?: FeedbackProjection;
   status: FeedbackRequestStatus;
   error?: string;
   undoExpiresAt?: number;
@@ -27,31 +33,63 @@ export type FeedbackStateEvent =
   | { type: "fail"; candidateId: string; action: TriageAction; error: string }
   | { type: "undo-dismiss"; candidateId: string };
 
+export const EMPTY_FEEDBACK_PROJECTION: Readonly<FeedbackProjection> = Object.freeze({
+  saved: false,
+  promoted: false,
+  dismissed: false
+});
+
+export function applyTriageAction(
+  current: Readonly<FeedbackProjection>,
+  action: TriageAction
+): FeedbackProjection {
+  if (action === "save") {
+    return { ...current, saved: true, dismissed: false };
+  }
+  if (action === "promote") {
+    return { ...current, promoted: true, dismissed: false };
+  }
+  return { saved: false, promoted: false, dismissed: true };
+}
+
+export function isTriageActionApplied(
+  current: Readonly<FeedbackProjection>,
+  action: TriageAction
+): boolean {
+  if (action === "save") return current.saved;
+  if (action === "promote") return current.promoted;
+  return current.dismissed;
+}
+
 export function createFeedbackState(
-  actions: Readonly<Record<string, TriageAction | undefined>> = {}
+  projections: Readonly<Record<string, FeedbackProjection | undefined>> = {}
 ): FeedbackState {
   return Object.fromEntries(
-    Object.entries(actions).flatMap(([candidateId, action]) =>
-      action
-        ? [[candidateId, { action, persistedAction: action, status: "idle" } satisfies CandidateFeedbackState]]
-        : []
-    )
+    Object.entries(projections).flatMap(([candidateId, projection]) => {
+      if (!projection) return [];
+      const current = cloneProjection(projection);
+      return [[candidateId, {
+        current,
+        persisted: cloneProjection(projection),
+        status: "idle"
+      } satisfies CandidateFeedbackState]];
+    })
   );
 }
 
 export function feedbackStateReducer(state: FeedbackState, event: FeedbackStateEvent): FeedbackState {
-  const current = state[event.candidateId] ?? { status: "idle" };
+  const current = state[event.candidateId] ?? emptyCandidateState();
 
   if (event.type === "start") {
-    if (current.pendingAction) return state;
+    if (current.pendingAction || isTriageActionApplied(current.current, event.action)) return state;
 
     return {
       ...state,
       [event.candidateId]: {
         ...current,
-        action: event.action,
+        current: applyTriageAction(current.current, event.action),
         pendingAction: event.action,
-        previousAction: current.action,
+        previous: cloneProjection(current.current),
         status: "pending",
         error: undefined,
         undoExpiresAt: event.undoExpiresAt
@@ -65,8 +103,8 @@ export function feedbackStateReducer(state: FeedbackState, event: FeedbackStateE
     return {
       ...state,
       [event.candidateId]: {
-        action: event.action,
-        persistedAction: event.action,
+        current: cloneProjection(current.current),
+        persisted: cloneProjection(current.current),
         status: "success"
       }
     };
@@ -74,12 +112,13 @@ export function feedbackStateReducer(state: FeedbackState, event: FeedbackStateE
 
   if (event.type === "fail") {
     if (current.pendingAction !== event.action) return state;
+    const restored = cloneProjection(current.previous ?? current.persisted);
 
     return {
       ...state,
       [event.candidateId]: {
-        action: current.previousAction,
-        persistedAction: current.persistedAction,
+        current: restored,
+        persisted: cloneProjection(current.persisted),
         status: "failure",
         error: event.error
       }
@@ -87,55 +126,87 @@ export function feedbackStateReducer(state: FeedbackState, event: FeedbackStateE
   }
 
   if (current.pendingAction !== "dismiss") return state;
+  const restored = cloneProjection(current.previous ?? current.persisted);
 
   return {
     ...state,
     [event.candidateId]: {
-      action: current.previousAction,
-      persistedAction: current.persistedAction,
+      current: restored,
+      persisted: cloneProjection(current.persisted),
       status: "idle"
     }
   };
 }
 
-export function effectiveTriageActions(state: FeedbackState): Record<string, TriageAction> {
+export function effectiveFeedbackProjections(
+  state: FeedbackState
+): Record<string, FeedbackProjection> {
   return Object.fromEntries(
     Object.entries(state).flatMap(([candidateId, item]) =>
-      item?.action ? [[candidateId, item.action]] : []
+      item ? [[candidateId, item.current]] : []
     )
   );
 }
 
 export function excludeDismissedRecommendations<T extends { candidateId: string }>(
   recommendations: readonly T[],
-  actions: Readonly<Record<string, TriageAction | undefined>>
+  feedback: Readonly<Record<string, FeedbackProjection | undefined>>
 ): T[] {
-  return recommendations.filter((recommendation) => actions[recommendation.candidateId] !== "dismiss");
+  return recommendations.filter((recommendation) => !feedback[recommendation.candidateId]?.dismissed);
 }
 
-export function latestTriageActions(logs: unknown): Record<string, TriageAction> {
+/** Replays append-only triage logs in stable chronological order. */
+export function foldFeedbackProjections(logs: unknown): Record<string, FeedbackProjection> {
   if (!Array.isArray(logs)) return {};
 
-  const state: Record<string, TriageAction> = {};
-
-  for (const entry of logs) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-
-    const candidateId = (entry as Record<string, unknown>).candidateId;
-    const actionType = (entry as Record<string, unknown>).actionType;
+  const entries = logs.flatMap((entry, inputIndex) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const value = entry as Record<string, unknown>;
     if (
-      typeof candidateId !== "string" ||
-      candidateId === "" ||
-      candidateId in state ||
-      !isTriageAction(actionType)
+      typeof value.candidateId !== "string" ||
+      value.candidateId === "" ||
+      !isTriageAction(value.actionType)
     ) {
-      continue;
+      return [];
     }
+    return [{
+      candidateId: value.candidateId,
+      action: value.actionType,
+      createdAt: typeof value.createdAt === "string" ? value.createdAt : "",
+      id: typeof value.id === "string" ? value.id : "",
+      inputIndex
+    }];
+  }).sort((left, right) => {
+    const createdAt = left.createdAt.localeCompare(right.createdAt);
+    if (createdAt !== 0) return createdAt;
+    const id = left.id.localeCompare(right.id);
+    return id !== 0 ? id : left.inputIndex - right.inputIndex;
+  });
 
-    state[candidateId] = actionType;
+  const projections: Record<string, FeedbackProjection> = {};
+  for (const entry of entries) {
+    projections[entry.candidateId] = applyTriageAction(
+      projections[entry.candidateId] ?? EMPTY_FEEDBACK_PROJECTION,
+      entry.action
+    );
   }
+  return projections;
+}
 
-  return state;
+function emptyCandidateState(): CandidateFeedbackState {
+  return {
+    current: cloneProjection(EMPTY_FEEDBACK_PROJECTION),
+    persisted: cloneProjection(EMPTY_FEEDBACK_PROJECTION),
+    status: "idle"
+  };
+}
+
+function cloneProjection(value: Readonly<FeedbackProjection>): FeedbackProjection {
+  return {
+    saved: value.saved,
+    promoted: value.promoted,
+    dismissed: value.dismissed
+  };
 }
 
 function isTriageAction(value: unknown): value is TriageAction {

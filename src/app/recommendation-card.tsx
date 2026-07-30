@@ -36,6 +36,7 @@ export function RecommendationCard({
   const statusId = `paper-${toDomId(recommendation.candidateId)}-feedback`;
   const originalUrl = getPrimaryPaperUrl(recommendation);
   const pending = feedback?.status === "pending";
+  const projection = feedback?.current;
   const limitations = getSourceLimitations(recommendation, originalUrl);
 
   return (
@@ -62,6 +63,15 @@ export function RecommendationCard({
           )}
           {recommendation.journal?.quartile ? (
             <span className="badge journal">{recommendation.journal.quartile}</span>
+          ) : null}
+          {projection?.saved && !projection.dismissed ? (
+            <span className="badge feedback-state-badge">Saved</span>
+          ) : null}
+          {projection?.promoted && !projection.dismissed ? (
+            <span className="badge feedback-state-badge promoted">Promoted</span>
+          ) : null}
+          {projection?.dismissed ? (
+            <span className="badge feedback-state-badge dismissed">Dismissed</span>
           ) : null}
         </div>
       </header>
@@ -161,15 +171,21 @@ function FeedbackActions({
   statusId: string;
   onFeedback: RecommendationCardProps["onFeedback"];
 }) {
+  const isActive = (action: TriageAction) => {
+    if (action === "save") return Boolean(feedback?.current.saved);
+    if (action === "promote") return Boolean(feedback?.current.promoted);
+    return Boolean(feedback?.current.dismissed);
+  };
+
   return (
     <div className="actions" aria-label="论文反馈操作" aria-describedby={statusId}>
       {(["save", "dismiss", "promote"] as const).map((action) => (
         <button
           key={action}
           type="button"
-          className={`feedback-action feedback-${action}`}
+          className={`feedback-action feedback-${action}${isActive(action) ? " is-active" : ""}`}
           disabled={pending}
-          aria-pressed={feedback?.action === action}
+          aria-pressed={isActive(action)}
           onClick={() => void onFeedback(candidateId, action)}
         >
           {pending && feedback?.pendingAction === action ? "处理中…" : ACTION_LABELS[action]}
@@ -180,7 +196,7 @@ function FeedbackActions({
 }
 
 function FeedbackStatus({ id, feedback }: { id: string; feedback?: CandidateFeedbackState }) {
-  if (!feedback || (feedback.status === "idle" && !feedback.action)) {
+  if (!feedback || (feedback.status === "idle" && !hasFeedback(feedback.current))) {
     return <p id={id} className="triage-state">尚未反馈</p>;
   }
 
@@ -192,11 +208,11 @@ function FeedbackStatus({ id, feedback }: { id: string; feedback?: CandidateFeed
     );
   }
 
-  const action = feedback.pendingAction ?? feedback.action;
-  const label = action ? ACTION_LABELS[action] : "反馈";
+  const action = feedback.pendingAction;
+  const labels = feedbackLabels(feedback.current);
   const message = feedback.status === "pending"
-    ? action === "dismiss" ? "已暂时移除，可在提示消失前撤销。" : `正在保存：${label}…`
-    : feedback.status === "success" ? `已保存：${label}` : `当前反馈：${label}`;
+    ? action === "dismiss" ? "已暂时移除，可在提示消失前撤销。" : `正在保存：${ACTION_LABELS[action ?? "save"]}…`
+    : feedback.status === "success" ? `已保存：${labels}` : `当前反馈：${labels}`;
 
   return <p id={id} className={`triage-state status-${feedback.status}`} role="status">{message}</p>;
 }
@@ -365,9 +381,33 @@ function getSourceLimitations(recommendation: DailyRecommendationRecord, origina
 }
 
 function feedbackDetailText(feedback?: CandidateFeedbackState): string {
-  if (!feedback?.action) return feedback?.status === "failure" ? "操作失败，当前没有反馈状态。" : "尚未反馈。";
-  const persisted = feedback.persistedAction === feedback.action ? "已写入" : "尚未写入";
-  return `${ACTION_LABELS[feedback.action]} · ${persisted}`;
+  if (!feedback || !hasFeedback(feedback.current)) {
+    return feedback?.status === "failure" ? "操作失败，当前没有反馈状态。" : "尚未反馈。";
+  }
+  const persisted = projectionsEqual(feedback.persisted, feedback.current) ? "已写入" : "尚未写入";
+  return `${feedbackLabels(feedback.current)} · ${persisted}`;
+}
+
+function feedbackLabels(projection: CandidateFeedbackState["current"]): string {
+  if (projection.dismissed) return ACTION_LABELS.dismiss;
+  const labels = [
+    projection.saved ? ACTION_LABELS.save : undefined,
+    projection.promoted ? ACTION_LABELS.promote : undefined
+  ].filter((value): value is string => Boolean(value));
+  return labels.join(" + ") || "尚未反馈";
+}
+
+function hasFeedback(projection: CandidateFeedbackState["current"]): boolean {
+  return projection.saved || projection.promoted || projection.dismissed;
+}
+
+function projectionsEqual(
+  left: CandidateFeedbackState["current"],
+  right: CandidateFeedbackState["current"]
+): boolean {
+  return left.saved === right.saved &&
+    left.promoted === right.promoted &&
+    left.dismissed === right.dismissed;
 }
 
 function formatScore(score: number): string {

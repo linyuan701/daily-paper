@@ -20,7 +20,12 @@ export interface FeedbackLogRepository {
     newValue?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
   }): Promise<FeedbackLogRecord>;
-  listLogs(input?: { runId?: string; candidateId?: string; limit?: number }): Promise<FeedbackLogRecord[]>;
+  listLogs(input?: {
+    runId?: string;
+    candidateId?: string;
+    candidateIds?: string[];
+    limit?: number;
+  }): Promise<FeedbackLogRecord[]>;
 }
 
 export interface FeedbackService {
@@ -44,5 +49,10 @@ export interface FeedbackService {
     newValue?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
   }): Promise<FeedbackLogRecord>;
-  listLogs(input?: { runId?: string; candidateId?: string; limit?: number }): Promise<FeedbackLogRecord[]>;
+  listLogs(input?: {
+    runId?: string;
+    candidateId?: string;
+    candidateIds?: string[];
+    limit?: number;
+  }): Promise<FeedbackLogRecord[]>;
 }

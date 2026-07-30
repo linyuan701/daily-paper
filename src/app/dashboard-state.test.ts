@@ -116,9 +116,9 @@ describe("dashboard query state", () => {
 
 describe("dashboard filtering and sorting", () => {
   const feedback = {
-    "paper-1": "save",
-    "paper-2": "promote",
-    "paper-3": "dismiss"
+    "paper-1": { saved: true, promoted: true, dismissed: false },
+    "paper-2": { saved: false, promoted: true, dismissed: false },
+    "paper-3": { saved: false, promoted: false, dismissed: true }
   } as const;
 
   it("keeps dismissed papers out of Today while exposing each feedback view and All", () => {
@@ -132,11 +132,22 @@ describe("dashboard filtering and sorting", () => {
     }))).toEqual(["paper-3"]);
     expect(ids(filterAndSortRecommendations(RECOMMENDATIONS, feedback, {
       ...DEFAULT_STATE, view: "promoted"
-    }))).toEqual(["paper-2"]);
+    }))).toEqual(["paper-2", "paper-1"]);
     expect(ids(filterAndSortRecommendations(RECOMMENDATIONS, feedback, {
       ...DEFAULT_STATE, view: "all"
     }))).toEqual(["paper-2", "paper-1", "paper-3"]);
   });
+
+  it.each(["saved", "promoted", "dismissed"] as const)(
+    "restores the %s view from its URL projection",
+    (view) => {
+      const query = parseDashboardQuery(`?view=${view}`);
+      const expected = view === "saved"
+        ? ["paper-1"]
+        : view === "promoted" ? ["paper-2", "paper-1"] : ["paper-3"];
+      expect(ids(filterAndSortRecommendations(RECOMMENDATIONS, feedback, query))).toEqual(expected);
+    }
+  );
 
   it("applies keyword, source, journal, tag, and feedback filters in the browser", () => {
     expect(ids(filterAndSortRecommendations(RECOMMENDATIONS, feedback, {
