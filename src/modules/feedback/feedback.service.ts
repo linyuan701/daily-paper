@@ -51,7 +51,12 @@ export class DefaultFeedbackService implements FeedbackService {
     });
   }
 
-  async listLogs(input?: { runId?: string; candidateId?: string; limit?: number }): Promise<FeedbackLogRecord[]> {
+  async listLogs(input?: {
+    runId?: string;
+    candidateId?: string;
+    candidateIds?: string[];
+    limit?: number;
+  }): Promise<FeedbackLogRecord[]> {
     return this.repository.listLogs(input);
   }
 }

@@ -918,6 +918,30 @@ main {
   content: "✓ ";
 }
 
+.feedback-action.is-active {
+  border-color: #206f78;
+  background: #e2f3f2;
+  color: #124d54;
+}
+
+.feedback-state-badge {
+  border-color: #63a3a8;
+  background: #e8f7f6;
+  color: #18565c;
+}
+
+.feedback-state-badge.promoted {
+  border-color: #8b75b6;
+  background: #f0ebf8;
+  color: #4e3974;
+}
+
+.feedback-state-badge.dismissed {
+  border-color: #9ba6aa;
+  background: #eef1f2;
+  color: #4f5d62;
+}
+
 .triage-state {
   min-height: 1.2rem;
   margin: -0.25rem 0 0;

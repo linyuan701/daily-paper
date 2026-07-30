@@ -28,7 +28,39 @@ describe("/api/feedback/logs", () => {
     expect(mocks.listLogs).toHaveBeenCalledWith({
       runId: "run-1",
       candidateId: undefined,
+      candidateIds: undefined,
       limit: 100
+    });
+  });
+
+  it("scopes state reconstruction to feed candidates without a history limit", async () => {
+    mocks.listLogs.mockResolvedValueOnce([]);
+
+    await GET(new Request(
+      "http://localhost/api/feedback/logs?runId=run-1" +
+      "&candidateId=candidate-1&candidateId=candidate-2&candidateId=candidate-1&limit=500"
+    ));
+
+    expect(mocks.listLogs).toHaveBeenCalledWith({
+      runId: "run-1",
+      candidateId: undefined,
+      candidateIds: ["candidate-1", "candidate-2"],
+      limit: undefined
+    });
+  });
+
+  it("does not cap a single feed candidate at 100 or 500 logs", async () => {
+    mocks.listLogs.mockResolvedValueOnce([]);
+
+    await GET(new Request(
+      "http://localhost/api/feedback/logs?runId=run-1&candidateId=candidate-1"
+    ));
+
+    expect(mocks.listLogs).toHaveBeenCalledWith({
+      runId: "run-1",
+      candidateId: undefined,
+      candidateIds: ["candidate-1"],
+      limit: undefined
     });
   });
 });

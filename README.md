@@ -63,6 +63,12 @@ This orchestrates:
    - `POST /api/feedback/actions`
    - `PUT /api/candidates/content`
 
+Dashboard triage replays the append-only feedback log into three independent Web projections:
+`saved`, `promoted`, and `dismissed`. A paper can therefore be both saved and promoted; dismissing it
+clears both positive projections until a later Save or Promote action. The existing Obsidian note
+format still has one scalar `status`, so it cannot fully represent `saved + promoted`. Obsidian
+bidirectional feedback sync is not implemented and is not implied by the Web projection.
+
 ## Scheduler Jobs
 - `POST /api/jobs/daily`: run daily recommendation pipeline
 - `POST /api/jobs/monthly-reminder`: profile-refresh reminder check
