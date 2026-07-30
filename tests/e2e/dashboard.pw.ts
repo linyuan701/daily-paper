@@ -117,7 +117,8 @@ test("status and Today denominator count selected recommendations only", async (
   await expect(page.locator(".dashboard-status")).toContainText("1 篇");
   await expect(page.getByText("显示 1 / 1 篇推荐", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "All" }).click();
-  await expect(page.getByText("显示 2 / 2 篇推荐", { exact: true })).toBeVisible();
+  await expect(page.getByText("显示 1 / 1 篇推荐", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Unselected candidate" })).toHaveCount(0);
 });
 
 test("URL query filters are restored after refresh", async ({ page }) => {
@@ -201,6 +202,86 @@ test("saved and promoted hydrate together, remain active, and dismiss Undo resto
   await expect(card.getByRole("button", { name: "收藏" })).toHaveAttribute("aria-pressed", "true");
   await expect(card.getByRole("button", { name: "优先阅读" })).toHaveAttribute("aria-pressed", "true");
   expect(posts).toHaveLength(0);
+});
+
+test("visible limit is restored from the URL and quick options update the shareable state", async ({ page }) => {
+  await installDashboardMocks(page, {
+    runs: [TODAY_RUN],
+    latestFeed: feed("run-today", paperSet(30))
+  });
+
+  await page.goto("/?limit=15");
+  await expect(page.getByRole("article")).toHaveCount(15);
+  await expect(page.locator("#dashboard-limit")).toHaveValue("15");
+
+  await page.reload();
+  await expect(page.getByRole("article")).toHaveCount(15);
+  expect(new URL(page.url()).searchParams.get("limit")).toBe("15");
+
+  await page.locator(".dashboard-limit-options").getByRole("button", { name: "30", exact: true }).click();
+  await expect(page.getByRole("article")).toHaveCount(30);
+  expect(new URL(page.url()).searchParams.get("limit")).toBe("30");
+});
+
+test("automatic visible limit is capped at 20 and invalid URL values fall back to automatic sizing", async ({ page }) => {
+  await installDashboardMocks(page, {
+    runs: [TODAY_RUN],
+    latestFeed: feed("run-today", paperSet(30))
+  });
+
+  await page.goto("/?limit=31");
+
+  await expect(page.getByRole("article")).toHaveCount(20);
+  await expect(page.locator(".dashboard-limit-options button[aria-pressed='true']")).toContainText("20");
+  await expect(page.locator("#dashboard-limit")).toHaveValue("20");
+});
+
+test("manual visible limit rejects invalid input and never pads a short feed", async ({ page }) => {
+  await installDashboardMocks(page, {
+    runs: [TODAY_RUN],
+    latestFeed: feed("run-today", paperSet(3))
+  });
+
+  await page.goto("/?limit=30");
+  await expect(page.getByRole("article")).toHaveCount(3);
+
+  await page.locator("#dashboard-limit").fill("1");
+  await page.locator(".dashboard-limit-manual").getByRole("button", { name: "应用" }).click();
+  await expect(page.getByRole("article")).toHaveCount(1);
+  expect(new URL(page.url()).searchParams.get("limit")).toBe("1");
+
+  await page.locator("#dashboard-limit").fill("31");
+  await page.locator(".dashboard-limit-manual").getByRole("button", { name: "应用" }).click();
+  await expect(page.locator("#dashboard-limit-error")).toBeVisible();
+  await expect(page.getByRole("article")).toHaveCount(1);
+  expect(new URL(page.url()).searchParams.get("limit")).toBe("1");
+});
+
+test("a larger visible limit does not backfill recommendations missing from a historical run", async ({ page }) => {
+  const oldRun = run({
+    runId: "run-old",
+    runDate: "2026-07-28",
+    status: "complete",
+    finishedAt: "2026-07-28T00:20:00.000Z"
+  });
+  await installDashboardMocks(page, {
+    runs: [TODAY_RUN, oldRun],
+    latestFeed: feed("run-today", paperSet(30, "today")),
+    feedsByRunId: {
+      "run-old": feed("run-old", paperSet(30, "historical").map((item, index) => ({
+        ...item,
+        selected: index < 7
+      })))
+    }
+  });
+
+  await page.goto("/?limit=30");
+  await expect(page.getByRole("article")).toHaveCount(30);
+
+  await page.locator("#dashboard-run").selectOption("run-old");
+  await expect(page.getByRole("article")).toHaveCount(7);
+  expect(new URL(page.url()).searchParams.get("limit")).toBe("30");
+  expect(new URL(page.url()).searchParams.get("runId")).toBe("run-old");
 });
 
 test("dismiss removes immediately and sends one POST after five seconds", async ({ page }) => {
@@ -633,4 +714,13 @@ function paper(overrides: JsonRecord = {}): JsonRecord {
     journal: { name: "Fixture Journal", quartile: "Q1", impactScore: 8.5 },
     ...overrides
   };
+}
+
+function paperSet(count: number, prefix = "candidate"): JsonRecord[] {
+  return Array.from({ length: count }, (_, index) => paper({
+    candidateId: `${prefix}-${index + 1}`,
+    rank: index + 1,
+    title: `${prefix} paper ${index + 1}`,
+    finalScore: 1 - index / 100
+  }));
 }

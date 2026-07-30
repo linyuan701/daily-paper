@@ -5,12 +5,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { DailyRecommendationFeed, DailyRecommendationRecord } from "../modules/ranking/explain/types";
 import { DashboardControls } from "./dashboard-controls";
 import {
+  applyDashboardVisibleLimit,
   createDashboardStatusViewModel,
   dashboardFeedQuery,
   DEFAULT_DASHBOARD_QUERY,
   filterAndSortRecommendations,
   getDashboardFilterOptions,
   parseDashboardQuery,
+  resolveDashboardVisibleLimit,
   serializeDashboardQuery,
   type DashboardOperationsRun,
   type DashboardQueryState
@@ -191,9 +193,21 @@ export default function HomePage() {
     () => getDashboardFilterOptions(visibleFeed?.recommendations ?? []),
     [visibleFeed]
   );
-  const recommendations = useMemo(
+  const selectedRecommendationCount = useMemo(
+    () => visibleFeed?.recommendations.filter((item) => item.selected !== false).length ?? 0,
+    [visibleFeed]
+  );
+  const visibleLimit = useMemo(
+    () => resolveDashboardVisibleLimit(query.limit, selectedRecommendationCount),
+    [query.limit, selectedRecommendationCount]
+  );
+  const filteredRecommendations = useMemo(
     () => filterAndSortRecommendations(visibleFeed?.recommendations ?? [], effectiveFeedback, query),
     [effectiveFeedback, query, visibleFeed]
+  );
+  const recommendations = useMemo(
+    () => applyDashboardVisibleLimit(filteredRecommendations, visibleLimit),
+    [filteredRecommendations, visibleLimit]
   );
   const viewTotalCount = useMemo(() => filterAndSortRecommendations(
     visibleFeed?.recommendations ?? [],
@@ -210,9 +224,9 @@ export default function HomePage() {
   const status = useMemo(() => createDashboardStatusViewModel({
     run: currentRun,
     feed: visibleFeed,
-    recommendationCount: visibleFeed?.recommendations.filter((item) => item.selected !== false).length ?? 0,
+    recommendationCount: selectedRecommendationCount,
     selectedRunId: query.runId
-  }), [currentRun, query.runId, visibleFeed]);
+  }), [currentRun, query.runId, selectedRecommendationCount, visibleFeed]);
   const pendingDismisses = useMemo(() => Object.entries(feedbackState).filter(
     ([, item]) => item?.pendingAction === "dismiss"
   ), [feedbackState]);
@@ -340,6 +354,7 @@ export default function HomePage() {
         runs={runs}
         resultCount={recommendations.length}
         totalCount={viewTotalCount}
+        selectedRecommendationCount={selectedRecommendationCount}
         onChange={updateQuery}
         disabled={loading || operationsLoading}
       />

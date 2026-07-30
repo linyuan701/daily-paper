@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  applyDashboardVisibleLimit,
   clearDashboardFilters,
   createDashboardStatusViewModel,
   dashboardFeedQuery,
   filterAndSortRecommendations,
   getDashboardFilterOptions,
   parseDashboardQuery,
+  resolveDashboardVisibleLimit,
   selectDashboardRun,
   serializeDashboardQuery,
   type DashboardOperationsRun,
@@ -63,7 +65,7 @@ describe("dashboard query state", () => {
   it("restores every frozen query parameter and trims values", () => {
     expect(parseDashboardQuery(
       "?runId=run-2&view=saved&q=%20immune%20&source=pubmed&journal=Nature+Methods" +
-      "&tag=single-cell&feedback=save&sort=newest"
+      "&tag=single-cell&feedback=save&sort=newest&limit=15"
     )).toEqual({
       runId: "run-2",
       view: "saved",
@@ -72,13 +74,27 @@ describe("dashboard query state", () => {
       journal: "Nature Methods",
       tag: "single-cell",
       feedback: "save",
-      sort: "newest"
+      sort: "newest",
+      limit: 15
     });
   });
 
   it("falls back safely for invalid enums and omits default values when serializing", () => {
     expect(parseDashboardQuery("?view=invalid&feedback=oops&sort=random")).toEqual(DEFAULT_STATE);
     expect(serializeDashboardQuery(DEFAULT_STATE).toString()).toBe("");
+  });
+
+  it.each(["0", "31", "1.5", "20.0", "not-a-number"]) (
+    "falls back to automatic display sizing for an invalid URL limit (%s)",
+    (limit) => {
+      expect(parseDashboardQuery(`?limit=${encodeURIComponent(limit)}`)).toEqual(DEFAULT_STATE);
+    }
+  );
+
+  it.each([1, 20, 30])("round trips a valid visible limit of %i", (limit) => {
+    const state = { ...DEFAULT_STATE, limit };
+    expect(serializeDashboardQuery(state).get("limit")).toBe(String(limit));
+    expect(parseDashboardQuery(serializeDashboardQuery(state))).toEqual(state);
   });
 
   it("round trips non-default state without adding unrelated parameters", () => {
@@ -90,7 +106,8 @@ describe("dashboard query state", () => {
       journal: "Cell",
       tag: "screen",
       feedback: "dismiss",
-      sort: "score"
+      sort: "score",
+      limit: 30
     };
     expect(parseDashboardQuery(serializeDashboardQuery(state))).toEqual(state);
   });
@@ -109,8 +126,29 @@ describe("dashboard query state", () => {
       runId: "run-history",
       view: "promoted",
       q: "x",
-      tag: "method"
+      tag: "method",
+      limit: 25
     })).toEqual({ ...DEFAULT_STATE, runId: "run-history" });
+  });
+});
+
+describe("dashboard visible limit", () => {
+  it("uses the selected recommendation count up to the automatic maximum of 20", () => {
+    expect(resolveDashboardVisibleLimit(undefined, 0)).toBe(0);
+    expect(resolveDashboardVisibleLimit(undefined, 1)).toBe(1);
+    expect(resolveDashboardVisibleLimit(undefined, 12)).toBe(12);
+    expect(resolveDashboardVisibleLimit(undefined, 30)).toBe(20);
+  });
+
+  it("honors an explicit 1-30 URL limit without inventing unavailable recommendations", () => {
+    expect(resolveDashboardVisibleLimit(1, 30)).toBe(1);
+    expect(resolveDashboardVisibleLimit(30, 2)).toBe(30);
+    expect(ids(applyDashboardVisibleLimit(RECOMMENDATIONS, 30))).toEqual(["paper-1", "paper-2", "paper-3"]);
+  });
+
+  it("applies the visible limit after filtering and sorting", () => {
+    const sorted = filterAndSortRecommendations(RECOMMENDATIONS, {}, { ...DEFAULT_STATE, view: "all" });
+    expect(ids(applyDashboardVisibleLimit(sorted, 2))).toEqual(["paper-2", "paper-1"]);
   });
 });
 
@@ -161,14 +199,25 @@ describe("dashboard filtering and sorting", () => {
     }))).toEqual(["paper-1"]);
   });
 
-  it("keeps rerank-unselected candidates in All without presenting them as Today recommendations", () => {
-    const unselected = { candidateId: "paper-unselected", rank: 4, selected: false };
+  it("never presents rerank-unselected candidates as recommendations in any view", () => {
+    const unselected = {
+      candidateId: "paper-unselected",
+      rank: 4,
+      selected: false,
+      sources: ["unselected-source"],
+      journal: { name: "Unselected Journal" }
+    };
     expect(ids(filterAndSortRecommendations([...RECOMMENDATIONS, unselected], feedback, DEFAULT_STATE)))
       .not.toContain("paper-unselected");
     expect(ids(filterAndSortRecommendations([...RECOMMENDATIONS, unselected], feedback, {
       ...DEFAULT_STATE,
       view: "all"
-    }))).toContain("paper-unselected");
+    }))).not.toContain("paper-unselected");
+    expect(getDashboardFilterOptions([...RECOMMENDATIONS, unselected])).toEqual({
+      sources: ["arxiv", "biorxiv", "journal", "pubmed"],
+      journals: ["Nature Methods"],
+      tags: ["atlas", "method", "protein-design", "resource", "single-cell", "transformer"]
+    });
   });
 
   it("sorts by rank, score, newest, and oldest with missing values last", () => {

@@ -60,6 +60,7 @@ export type AppEnv = {
   DAILY_MIN_CANDIDATE_POOL: number;
   DAILY_ROLLING_LOOKBACK_DAYS: number;
   DAILY_RUN_STALE_AFTER_MINUTES: number;
+  DAILY_RECOMMENDATION_LIMIT: number;
 };
 
 let cachedEnv: AppEnv | null = null;
@@ -102,6 +103,14 @@ export function loadEnv(rawEnv: EnvironmentInput = process.env): AppEnv {
   const deploymentMode = parseDeploymentMode(rawEnv.DEPLOYMENT_MODE, issues);
   const databaseUrl = rawEnv.DATABASE_URL?.trim() ?? "";
   const zoteroTransport = parseZoteroTransport(rawEnv.ZOTERO_TRANSPORT, issues);
+  const dailyRecommendationLimit = parseBoundedInteger(
+    rawEnv.DAILY_RECOMMENDATION_LIMIT,
+    "DAILY_RECOMMENDATION_LIMIT",
+    20,
+    1,
+    30,
+    issues
+  );
 
   if (deploymentMode === "local" && !databaseUrl.startsWith("file:")) {
     issues.push("Local Mode requires DATABASE_URL to use Prisma's file: SQLite format");
@@ -163,7 +172,8 @@ export function loadEnv(rawEnv: EnvironmentInput = process.env): AppEnv {
     SOURCE_HTTP_TIMEOUT_MS: parsePositiveInteger(rawEnv.SOURCE_HTTP_TIMEOUT_MS, 20_000),
     DAILY_MIN_CANDIDATE_POOL: parseNonNegativeInteger(rawEnv.DAILY_MIN_CANDIDATE_POOL, 50),
     DAILY_ROLLING_LOOKBACK_DAYS: parseNonNegativeInteger(rawEnv.DAILY_ROLLING_LOOKBACK_DAYS, 3),
-    DAILY_RUN_STALE_AFTER_MINUTES: parsePositiveInteger(rawEnv.DAILY_RUN_STALE_AFTER_MINUTES, 180)
+    DAILY_RUN_STALE_AFTER_MINUTES: parsePositiveInteger(rawEnv.DAILY_RUN_STALE_AFTER_MINUTES, 180),
+    DAILY_RECOMMENDATION_LIMIT: dailyRecommendationLimit
   };
 }
 
@@ -232,6 +242,29 @@ function parseNonNegativeInteger(value: string | undefined, fallback: number): n
   if (!value) return fallback;
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function parseBoundedInteger(
+  value: string | undefined,
+  key: string,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+  issues: string[]
+): number {
+  const normalized = value?.trim();
+  if (!normalized) return fallback;
+  if (!/^\d+$/.test(normalized)) {
+    issues.push(`${key} must be an integer between ${minimum} and ${maximum}`);
+    return fallback;
+  }
+
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    issues.push(`${key} must be an integer between ${minimum} and ${maximum}`);
+    return fallback;
+  }
+  return parsed;
 }
 
 export function getEnv(): AppEnv {

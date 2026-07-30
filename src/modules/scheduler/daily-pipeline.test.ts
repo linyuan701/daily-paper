@@ -12,11 +12,17 @@ const mocks = vi.hoisted(() => ({
   generateSummariesForRun: vi.fn(),
   runRecall: vi.fn(),
   runRerank: vi.fn(),
+  getLatestRerankRun: vi.fn(),
   initializeStages: vi.fn(),
   startStage: vi.fn(),
   completeStage: vi.fn(),
   failStage: vi.fn(),
-  listStages: vi.fn()
+  listStages: vi.fn(),
+  getEnv: vi.fn()
+}));
+
+vi.mock("../../lib/config", () => ({
+  getEnv: mocks.getEnv
 }));
 
 vi.mock("../ingestion", () => ({
@@ -55,7 +61,8 @@ vi.mock("../ranking/recall", () => ({
 
 vi.mock("../ranking/rerank", () => ({
   createRerankService: () => ({
-    runRerank: mocks.runRerank
+    runRerank: mocks.runRerank,
+    getLatestRerankRun: mocks.getLatestRerankRun
   })
 }));
 
@@ -87,11 +94,15 @@ describe("runDailyRecommendationPipeline", () => {
     mocks.generateSummariesForRun.mockReset();
     mocks.runRecall.mockReset();
     mocks.runRerank.mockReset();
+    mocks.getLatestRerankRun.mockReset();
+    mocks.getLatestRerankRun.mockResolvedValue(null);
     mocks.initializeStages.mockReset();
     mocks.startStage.mockReset();
     mocks.completeStage.mockReset();
     mocks.failStage.mockReset();
     mocks.listStages.mockReset();
+    mocks.getEnv.mockReset();
+    mocks.getEnv.mockReturnValue({ DAILY_RECOMMENDATION_LIMIT: 20 });
     mocks.enrichRun.mockResolvedValue({ processed: 0, enriched: 0, notFound: 0, failed: 0 });
     mocks.runForIngestionRun.mockResolvedValue({ canonicalCount: 0 });
     mocks.generateLabelsForRun.mockResolvedValue({ requested: 0, generated: 0, failed: 0 });
@@ -108,6 +119,124 @@ describe("runDailyRecommendationPipeline", () => {
       { stage: "rerank", status: "success" },
       { stage: "summary", status: "success" }
     ]);
+  });
+
+  it.each([1, 20, 30])("uses configured final selection limit %i without shrinking recall", async (limit) => {
+    mocks.getEnv.mockReturnValue({ DAILY_RECOMMENDATION_LIMIT: limit });
+    mocks.runAggregatedIngestion.mockResolvedValue({
+      run: { id: `run-limit-${limit}`, attempt: 1 },
+      disposition: "acquired",
+      sourceSummaries: [{ source: "pubmed", candidatesCount: 100 }]
+    });
+
+    await runDailyRecommendationPipeline({ sources: ["pubmed"] });
+
+    expect(mocks.runRecall).toHaveBeenCalledWith({ runId: `run-limit-${limit}` });
+    expect(mocks.runRerank).toHaveBeenCalledWith({ runId: `run-limit-${limit}`, topN: limit });
+    expect(mocks.completeStage).toHaveBeenCalledWith({
+      runId: `run-limit-${limit}`,
+      attempt: 1,
+      stage: "rerank",
+      details: { rerankRunId: "rerank-1", recommendationLimit: limit }
+    });
+    expect(mocks.generateSummariesForRun).toHaveBeenCalledWith({
+      runId: `run-limit-${limit}`,
+      limit,
+      selectedOnly: true
+    });
+  });
+
+  it.each([
+    { persistedLimit: 30, configuredLimit: 1 },
+    { persistedLimit: 1, configuredLimit: 30 }
+  ])(
+    "keeps a run's selected limit at $persistedLimit when configuration changes to $configuredLimit before summary resume",
+    async ({ persistedLimit, configuredLimit }) => {
+      mocks.getEnv.mockReturnValue({ DAILY_RECOMMENDATION_LIMIT: configuredLimit });
+      mocks.runAggregatedIngestion.mockResolvedValue({
+        run: { id: "run-resume-limit", attempt: 2 },
+        disposition: "pipeline_acquired",
+        sourceSummaries: [{ source: "pubmed", status: "success", candidatesCount: 100 }]
+      });
+      mocks.listStages
+        .mockResolvedValueOnce([
+          { stage: "ingestion", status: "success" },
+          { stage: "enrichment", status: "success" },
+          { stage: "normalization", status: "success" },
+          { stage: "representation", status: "success" },
+          { stage: "recall", status: "success" },
+          {
+            stage: "rerank",
+            status: "success",
+            details: { rerankRunId: "rerank-existing", recommendationLimit: persistedLimit }
+          },
+          { stage: "summary", status: "partial" }
+        ])
+        .mockResolvedValueOnce([
+          { stage: "ingestion", status: "success" },
+          { stage: "enrichment", status: "success" },
+          { stage: "normalization", status: "success" },
+          { stage: "representation", status: "success" },
+          { stage: "recall", status: "success" },
+          {
+            stage: "rerank",
+            status: "success",
+            details: { rerankRunId: "rerank-existing", recommendationLimit: persistedLimit }
+          },
+          { stage: "summary", status: "success" }
+        ]);
+
+      await runDailyRecommendationPipeline({ sources: ["pubmed"] });
+
+      expect(mocks.runRerank).not.toHaveBeenCalled();
+      expect(mocks.generateSummariesForRun).toHaveBeenCalledWith({
+        runId: "run-resume-limit",
+        limit: persistedLimit,
+        selectedOnly: true
+      });
+    }
+  );
+
+  it("recovers the selected limit from a successful rerank for an in-flight pre-upgrade run", async () => {
+    mocks.getEnv.mockReturnValue({ DAILY_RECOMMENDATION_LIMIT: 1 });
+    mocks.runAggregatedIngestion.mockResolvedValue({
+      run: { id: "run-pre-upgrade", attempt: 2 },
+      disposition: "pipeline_acquired",
+      sourceSummaries: [{ source: "pubmed", status: "success", candidatesCount: 100 }]
+    });
+    mocks.getLatestRerankRun.mockResolvedValue({
+      run: { status: "success", requestedTopN: 30 },
+      results: []
+    });
+    mocks.listStages
+      .mockResolvedValueOnce([
+        { stage: "ingestion", status: "success" },
+        { stage: "enrichment", status: "success" },
+        { stage: "normalization", status: "success" },
+        { stage: "representation", status: "success" },
+        { stage: "recall", status: "success" },
+        { stage: "rerank", status: "success", details: { rerankRunId: "rerank-existing" } },
+        { stage: "summary", status: "partial" }
+      ])
+      .mockResolvedValueOnce([
+        { stage: "ingestion", status: "success" },
+        { stage: "enrichment", status: "success" },
+        { stage: "normalization", status: "success" },
+        { stage: "representation", status: "success" },
+        { stage: "recall", status: "success" },
+        { stage: "rerank", status: "success", details: { rerankRunId: "rerank-existing" } },
+        { stage: "summary", status: "success" }
+      ]);
+
+    await runDailyRecommendationPipeline({ sources: ["pubmed"] });
+
+    expect(mocks.getLatestRerankRun).toHaveBeenCalledWith("run-pre-upgrade");
+    expect(mocks.runRerank).not.toHaveBeenCalled();
+    expect(mocks.generateSummariesForRun).toHaveBeenCalledWith({
+      runId: "run-pre-upgrade",
+      limit: 30,
+      selectedOnly: true
+    });
   });
 
   it("runs aggregated ingestion and downstream stages once", async () => {

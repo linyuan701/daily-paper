@@ -213,6 +213,61 @@ describe("DefaultRerankService", () => {
     expect(result.results[1].selected).toBe(false);
   });
 
+  it("persists the full rerank pool while selecting exactly the configured 30", async () => {
+    const recalled = Array.from({ length: 35 }, (_, index) => ({
+      candidateId: `candidate-${index + 1}`,
+      recallScore: 1 - index / 100,
+      recallRank: index + 1,
+      selected: true
+    }));
+    const candidates = recalled.map((item) => ({
+      candidateId: item.candidateId,
+      runId: "run-30",
+      title: `single cell method ${item.recallRank}`,
+      sources: ["journal" as const],
+      hasUserCorrectedOutput: false
+    }));
+    const repository = {
+      getLatestSuccessfulRecallRun: vi.fn().mockResolvedValue({
+        recallRunId: "recall-30",
+        profileSnapshotId: "snap-30",
+        results: recalled
+      }),
+      getProfileSnapshot: vi.fn().mockResolvedValue({
+        id: "snap-30",
+        builtAt: new Date().toISOString(),
+        recentCoreTexts: ["single cell"],
+        stableLongTermTexts: ["omics"],
+        highAttentionTexts: ["single cell"],
+        contentRecallLabels: ["cell mapping"],
+        researchTypePreferences: [{ category: "method" as const, weight: 1 }],
+        averageCollectionWeight: 0.7
+      }),
+      getCandidatesForRerank: vi.fn().mockResolvedValue(candidates),
+      createRerankRun: vi.fn().mockResolvedValue({ id: "rerank-30" }),
+      saveRerankResults: vi.fn(),
+      markRerankRunSucceeded: vi.fn().mockResolvedValue({
+        id: "rerank-30",
+        runId: "run-30",
+        recallRunId: "recall-30",
+        profileSnapshotId: "snap-30",
+        status: "success",
+        startedAt: new Date().toISOString(),
+        requestedTopN: 30,
+        candidateCount: 35,
+        recommendedCount: 30
+      }),
+      markRerankRunFailed: vi.fn(),
+      getLatestRerankRun: vi.fn().mockResolvedValue(null)
+    };
+
+    await new DefaultRerankService(repository).runRerank({ runId: "run-30", topN: 30 });
+
+    const persisted = repository.saveRerankResults.mock.calls[0][0].results;
+    expect(persisted).toHaveLength(35);
+    expect(persisted.filter((item: { selected: boolean }) => item.selected)).toHaveLength(30);
+  });
+
   it("defaults to selecting top 20 when no topN is provided", async () => {
     const repository = {
       getLatestSuccessfulRecallRun: vi.fn().mockResolvedValue({
