@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { inspectRuntimeEnvironment, resolveDeploymentMode, runCheckEnv } from "./check-env.mjs";
+import { inspectRuntimeEnvironment, parseRecommendationLimit, resolveDeploymentMode, runCheckEnv } from "./check-env.mjs";
 
 const validCloudEnv = {
   DEPLOYMENT_MODE: "cloud",
@@ -16,6 +16,17 @@ test("deployment mode defaults to local and rejects unsupported values", () => {
   assert.deepEqual(resolveDeploymentMode({}), { mode: "local" });
   assert.equal(resolveDeploymentMode({ DEPLOYMENT_MODE: "LOCAL" }).mode, "local");
   assert.equal(resolveDeploymentMode({ DEPLOYMENT_MODE: "server" }).mode, null);
+});
+
+test("daily recommendation limit is strict and bounded in preflight", () => {
+  assert.equal(parseRecommendationLimit(undefined), 20);
+  for (const value of ["1", "20", "30"]) assert.equal(parseRecommendationLimit(value), Number(value));
+  for (const value of ["0", "31", "1.5", "paper"]) assert.equal(parseRecommendationLimit(value), null);
+
+  for (const value of ["0", "31", "1.5", "paper"]) {
+    const report = inspectRuntimeEnvironment({ DATABASE_URL: "file:./dev.db", DAILY_RECOMMENDATION_LIMIT: value });
+    assert.ok(report.checks.some((item) => item.level === "error" && item.code === "daily_recommendation_limit"));
+  }
 });
 
 test("local environment requires SQLite and remains ready without Zotero web credentials", () => {

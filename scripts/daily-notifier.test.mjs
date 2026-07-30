@@ -140,3 +140,30 @@ test("Nodemailer 9 renders the production message shape without network access",
   assert.match(rendered, /Content-Type: multipart\/alternative/);
   assert.match(rendered, /arxiv/);
 });
+
+test("SMTP includes every selected recommendation for configured limits", async () => {
+  for (const count of [1, 20, 30]) {
+    const limitedNotification = buildDailyNotification({
+      pipelinePayload: { status: "complete", result: { runId: `run-${count}`, sources: [] } },
+      feed: {
+        recommendations: Array.from({ length: count }, (_, index) => ({
+          title: `Selected paper ${index + 1}`,
+          sources: ["pubmed"]
+        }))
+      }
+    });
+    let sentMail;
+    await sendDailyNotification({
+      notification: limitedNotification,
+      env: {
+        NOTIFICATION_SMTP_HOST: "smtp.example.test",
+        NOTIFICATION_EMAIL_FROM: "from@example.test",
+        NOTIFICATION_EMAIL_TO: "to@example.test"
+      },
+      createTransport: () => ({ sendMail: async (message) => { sentMail = message; } })
+    });
+
+    assert.equal(limitedNotification.papers.length, count);
+    assert.match(sentMail.text, new RegExp(`Selected paper ${count}`));
+  }
+});
