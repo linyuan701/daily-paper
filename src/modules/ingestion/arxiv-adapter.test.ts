@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppError } from "../../lib/errors";
-import { ArxivSourceAdapter } from "./arxiv-adapter";
+import * as sourceHttp from "./http";
+import { ARXIV_USER_AGENT, ArxivSourceAdapter } from "./arxiv-adapter";
 
 describe("ArxivSourceAdapter", () => {
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -45,6 +47,12 @@ describe("ArxivSourceAdapter", () => {
       expect.any(Object)
     );
     expect(fetchMock.mock.calls[0]?.[0]).toContain("start=0");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      headers: {
+        Accept: "application/atom+xml",
+        "User-Agent": ARXIV_USER_AGENT
+      }
+    });
     expect(records).toHaveLength(1);
     expect(records[0].arxivId).toBe("2603.12345v1");
     expect(records[0].doi).toBe("10.1000/test");
@@ -78,6 +86,74 @@ describe("ArxivSourceAdapter", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[1]?.[0]).toContain("start=100");
     expect(records).toHaveLength(101);
+  });
+
+  it("uses the configured maximum page count", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => wrapFeed(buildEntries(100, 3000))
+    } as Response);
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+
+    const adapter = new ArxivSourceAdapter({
+      categoryScopes: ["q-bio.GN"],
+      maxPages: 1
+    });
+    const records = await adapter.fetchCandidatesForDay({
+      runDate: new Date("2026-03-07T00:00:00Z"),
+      dayStart: new Date("2026-03-07T00:00:00Z"),
+      dayEnd: new Date("2026-03-07T23:59:59.999Z")
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(records).toHaveLength(100);
+  });
+
+  it("explicitly enables Retry-After handling for arXiv requests", async () => {
+    const fetchWithRetry = vi.spyOn(sourceHttp, "fetchWithRetry").mockResolvedValue(
+      new Response(wrapFeed(buildEntries(1, 4000)), { status: 200 })
+    );
+    const adapter = new ArxivSourceAdapter({
+      categoryScopes: ["q-bio.GN"],
+      retryAfterCapMs: 5_000
+    });
+
+    await adapter.fetchCandidatesForDay({
+      runDate: new Date("2026-03-07T00:00:00Z"),
+      dayStart: new Date("2026-03-07T00:00:00Z"),
+      dayEnd: new Date("2026-03-07T23:59:59.999Z")
+    });
+
+    expect(fetchWithRetry).toHaveBeenCalledWith(
+      expect.stringContaining("export.arxiv.org/api/query"),
+      expect.any(Object),
+      expect.objectContaining({
+        respectRetryAfter: true,
+        retryAfterCapMs: 5_000
+      })
+    );
+  });
+
+  it("classifies exhausted network failures without attributing them to ranking", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("connection refused")) as unknown as typeof fetch);
+    const adapter = new ArxivSourceAdapter({
+      categoryScopes: ["q-bio.GN"],
+      retryBackoffMs: 0
+    });
+
+    await expect(adapter.fetchCandidatesForDay({
+      runDate: new Date("2026-03-07T00:00:00Z"),
+      dayStart: new Date("2026-03-07T00:00:00Z"),
+      dayEnd: new Date("2026-03-07T23:59:59.999Z")
+    })).rejects.toMatchObject({
+      code: "ARXIV_API_ERROR",
+      details: {
+        failureCategory: "network",
+        attempts: 3,
+        endpointHost: "export.arxiv.org"
+      }
+    });
   });
 
   it("fails when category scopes are missing", async () => {

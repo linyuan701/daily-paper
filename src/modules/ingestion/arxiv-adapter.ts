@@ -1,11 +1,14 @@
 import { AppError } from "../../lib/errors";
-import { fetchWithRetry } from "./http";
+import { fetchWithRetry, SourceHttpError } from "./http";
 import type { DailySourceAdapter, DailySourceAdapterCandidate, UtcDayWindow } from "./types";
 
 const ARXIV_API_BASE = "https://export.arxiv.org/api/query";
 const ARXIV_PAGE_SIZE = 100;
-const ARXIV_MAX_PAGES = 5;
-const REQUEST_TIMEOUT_MS = 12000;
+const DEFAULT_ARXIV_MAX_PAGES = 5;
+const DEFAULT_REQUEST_TIMEOUT_MS = 12_000;
+const DEFAULT_RETRY_BACKOFF_MS = 250;
+const DEFAULT_RETRY_AFTER_CAP_MS = 120_000;
+export const ARXIV_USER_AGENT = "DailyPaper/0.3 (scholarly-literature-triage)";
 
 type ArxivEntry = {
   id: string;
@@ -23,9 +26,23 @@ export class ArxivSourceAdapter implements DailySourceAdapter {
   readonly source = "arxiv" as const;
 
   private readonly categoryScopes: string[];
+  private readonly maxPages: number;
+  private readonly timeoutMs: number;
+  private readonly retryBackoffMs: number;
+  private readonly retryAfterCapMs: number;
 
-  constructor(input: { categoryScopes: string[] }) {
+  constructor(input: {
+    categoryScopes: string[];
+    maxPages?: number;
+    timeoutMs?: number;
+    retryBackoffMs?: number;
+    retryAfterCapMs?: number;
+  }) {
     this.categoryScopes = input.categoryScopes.map((scope) => scope.trim()).filter(Boolean);
+    this.maxPages = positiveInteger(input.maxPages, DEFAULT_ARXIV_MAX_PAGES);
+    this.timeoutMs = positiveInteger(input.timeoutMs, DEFAULT_REQUEST_TIMEOUT_MS);
+    this.retryBackoffMs = nonNegativeInteger(input.retryBackoffMs, DEFAULT_RETRY_BACKOFF_MS);
+    this.retryAfterCapMs = nonNegativeInteger(input.retryAfterCapMs, DEFAULT_RETRY_AFTER_CAP_MS);
   }
 
   async fetchCandidatesForDay(_window: UtcDayWindow): Promise<DailySourceAdapterCandidate[]> {
@@ -40,7 +57,7 @@ export class ArxivSourceAdapter implements DailySourceAdapter {
     const byExternalId = new Map<string, DailySourceAdapterCandidate>();
 
     for (const scope of this.categoryScopes) {
-      for (let page = 0; page < ARXIV_MAX_PAGES; page += 1) {
+      for (let page = 0; page < this.maxPages; page += 1) {
         const start = page * ARXIV_PAGE_SIZE;
         const feed = await this.fetchFeedForCategory(scope, start, ARXIV_PAGE_SIZE);
         const entries = parseArxivFeed(feed);
@@ -76,19 +93,45 @@ export class ArxivSourceAdapter implements DailySourceAdapter {
         url,
         {
           headers: {
-            Accept: "application/atom+xml"
+            Accept: "application/atom+xml",
+            "User-Agent": ARXIV_USER_AGENT
           }
         },
         {
-          timeoutMs: REQUEST_TIMEOUT_MS
+          timeoutMs: this.timeoutMs,
+          backoffMs: this.retryBackoffMs,
+          respectRetryAfter: true,
+          retryAfterCapMs: this.retryAfterCapMs
         }
       );
     } catch (error) {
-      throw new AppError("ARXIV_API_ERROR", error instanceof Error ? error.message : "arXiv request failed");
+      throw new AppError(
+        "ARXIV_API_ERROR",
+        error instanceof Error ? error.message : "arXiv request failed",
+        502,
+        {
+          failureCategory: error instanceof SourceHttpError ? error.kind : "unknown",
+          attempts: error instanceof SourceHttpError ? error.attempts : undefined,
+          endpointHost: "export.arxiv.org"
+        }
+      );
     }
 
     if (!response.ok) {
-      throw new AppError("ARXIV_API_ERROR", `arXiv API request failed with status ${response.status}`);
+      throw new AppError(
+        "ARXIV_API_ERROR",
+        `arXiv API request failed with status ${response.status}`,
+        502,
+        {
+          failureCategory: response.status === 429
+            ? "rate_limited"
+            : response.status >= 500
+              ? "server_error"
+              : "http_error",
+          httpStatus: response.status,
+          endpointHost: "export.arxiv.org"
+        }
+      );
     }
 
     return response.text();
@@ -200,4 +243,12 @@ function sanitizeString(value: string | undefined): string | undefined {
   }
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function nonNegativeInteger(value: number | undefined, fallback: number): number {
+  return value !== undefined && Number.isInteger(value) && value >= 0 ? value : fallback;
 }
