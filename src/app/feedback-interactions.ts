@@ -1,6 +1,9 @@
 import {
   createFeedbackState,
   feedbackStateReducer,
+  isTriageActionApplied,
+  EMPTY_FEEDBACK_PROJECTION,
+  type FeedbackProjection,
   type FeedbackState,
   type TriageAction
 } from "./feedback-state";
@@ -13,7 +16,7 @@ export type PersistFeedbackAction = (input: {
 
 export type FeedbackActionResult =
   | { accepted: true; delayed: boolean }
-  | { accepted: false; reason: "pending" | "disposed" };
+  | { accepted: false; reason: "pending" | "disposed" | "already_applied" };
 
 export type FeedbackController = {
   getState(): FeedbackState;
@@ -24,7 +27,7 @@ export type FeedbackController = {
 
 export type FeedbackControllerOptions = {
   runId: string;
-  initialActions?: Readonly<Record<string, TriageAction | undefined>>;
+  initialProjections?: Readonly<Record<string, FeedbackProjection | undefined>>;
   dismissDelayMs?: number;
   persist?: PersistFeedbackAction;
   onChange?: (state: FeedbackState) => void;
@@ -38,7 +41,7 @@ export function createFeedbackController(options: FeedbackControllerOptions): Fe
   const now = options.now ?? Date.now;
   const persist = options.persist ?? persistFeedbackAction;
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
-  let state = createFeedbackState(options.initialActions);
+  let state = createFeedbackState(options.initialProjections);
   let disposed = false;
 
   function dispatch(event: Parameters<typeof feedbackStateReducer>[1]) {
@@ -72,6 +75,12 @@ export function createFeedbackController(options: FeedbackControllerOptions): Fe
     async perform(candidateId, action) {
       if (disposed) return { accepted: false, reason: "disposed" };
       if (state[candidateId]?.pendingAction) return { accepted: false, reason: "pending" };
+      if (isTriageActionApplied(
+        state[candidateId]?.current ?? EMPTY_FEEDBACK_PROJECTION,
+        action
+      )) {
+        return { accepted: false, reason: "already_applied" };
+      }
 
       if (action === "dismiss") {
         dispatch({

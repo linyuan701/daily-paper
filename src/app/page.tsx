@@ -19,8 +19,9 @@ import { DashboardStatus } from "./dashboard-status";
 import { createFeedbackController, type FeedbackController } from "./feedback-interactions";
 import {
   createFeedbackState,
-  effectiveTriageActions,
-  latestTriageActions,
+  effectiveFeedbackProjections,
+  foldFeedbackProjections,
+  type FeedbackProjection,
   type FeedbackState,
   type TriageAction
 } from "./feedback-state";
@@ -124,9 +125,14 @@ export default function HomePage() {
         const nextFeed = payload.feed ?? null;
         if (!nextFeed) return;
 
-        let initialActions: Record<string, TriageAction> = {};
+        let initialProjections: Record<string, FeedbackProjection> = {};
         try {
-          const feedbackQuery = new URLSearchParams({ runId: nextFeed.runId, limit: "500" });
+          const feedbackQuery = new URLSearchParams({ runId: nextFeed.runId });
+          for (const candidateId of new Set(
+            nextFeed.recommendations.map((recommendation) => recommendation.candidateId)
+          )) {
+            feedbackQuery.append("candidateId", candidateId);
+          }
           const feedbackResponse = await fetch(`/api/feedback/logs?${feedbackQuery}`, {
             cache: "no-store",
             signal: controller.signal
@@ -134,17 +140,17 @@ export default function HomePage() {
           if (!feedbackResponse.ok) throw new Error(`请求失败 (${feedbackResponse.status})`);
           const feedbackPayload = await feedbackResponse.json() as { status?: string; logs?: unknown };
           if (feedbackPayload.status !== "ok") throw new Error("反馈接口未返回成功状态");
-          initialActions = latestTriageActions(feedbackPayload.logs);
+          initialProjections = foldFeedbackProjections(feedbackPayload.logs);
         } catch (loadError) {
           if (controller.signal.aborted) return;
           setFeedbackLoadError(loadError instanceof Error ? loadError.message : "无法恢复反馈状态");
         }
 
-        const initialState = createFeedbackState(initialActions);
+        const initialState = createFeedbackState(initialProjections);
         setFeedbackState(initialState);
         feedbackController.current = createFeedbackController({
           runId: nextFeed.runId,
-          initialActions,
+          initialProjections,
           onChange: setFeedbackState
         });
         setFeed(nextFeed);
@@ -177,18 +183,21 @@ export default function HomePage() {
     return feed.runId === currentRun.runId ? feed : null;
   }, [currentRun, feed, operationsError, operationsLoading, query.runId]);
 
-  const effectiveActions = useMemo(() => effectiveTriageActions(feedbackState), [feedbackState]);
+  const effectiveFeedback = useMemo(
+    () => effectiveFeedbackProjections(feedbackState),
+    [feedbackState]
+  );
   const filterOptions = useMemo(
     () => getDashboardFilterOptions(visibleFeed?.recommendations ?? []),
     [visibleFeed]
   );
   const recommendations = useMemo(
-    () => filterAndSortRecommendations(visibleFeed?.recommendations ?? [], effectiveActions, query),
-    [effectiveActions, query, visibleFeed]
+    () => filterAndSortRecommendations(visibleFeed?.recommendations ?? [], effectiveFeedback, query),
+    [effectiveFeedback, query, visibleFeed]
   );
   const viewTotalCount = useMemo(() => filterAndSortRecommendations(
     visibleFeed?.recommendations ?? [],
-    effectiveActions,
+    effectiveFeedback,
     {
       ...query,
       q: "",
@@ -197,7 +206,7 @@ export default function HomePage() {
       tag: undefined,
       feedback: "all"
     }
-  ).length, [effectiveActions, query, visibleFeed]);
+  ).length, [effectiveFeedback, query, visibleFeed]);
   const status = useMemo(() => createDashboardStatusViewModel({
     run: currentRun,
     feed: visibleFeed,

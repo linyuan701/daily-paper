@@ -43,15 +43,23 @@ export class PrismaFeedbackLogRepository implements FeedbackLogRepository {
   async listLogs(input?: {
     runId?: string;
     candidateId?: string;
+    candidateIds?: string[];
     limit?: number;
   }): Promise<FeedbackLogRecord[]> {
+    const candidateIds = input?.candidateIds?.length
+      ? [...new Set(input.candidateIds)]
+      : undefined;
     const rows = await this.db.candidateFeedbackLog.findMany({
       where: {
         ...(input?.runId ? { runId: input.runId } : {}),
-        ...(input?.candidateId ? { candidateId: input.candidateId } : {})
+        ...(candidateIds
+          ? { candidateId: { in: candidateIds } }
+          : input?.candidateId ? { candidateId: input.candidateId } : {})
       },
-      orderBy: [{ createdAt: "desc" }],
-      take: input?.limit ?? 100
+      orderBy: candidateIds
+        ? [{ createdAt: "asc" }, { id: "asc" }]
+        : [{ createdAt: "desc" }, { id: "desc" }],
+      ...(candidateIds ? {} : { take: input?.limit ?? 100 })
     });
 
     return rows.map((row) => mapFeedbackLog(row));

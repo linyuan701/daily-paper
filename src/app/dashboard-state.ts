@@ -1,3 +1,5 @@
+import type { FeedbackProjection } from "./feedback-state";
+
 export const DASHBOARD_VIEWS = ["today", "saved", "dismissed", "promoted", "all"] as const;
 export type DashboardView = (typeof DASHBOARD_VIEWS)[number];
 
@@ -162,7 +164,7 @@ export function dashboardFeedQuery(state: DashboardQueryState): URLSearchParams 
 
 export function filterAndSortRecommendations<T extends DashboardRecommendation>(
   recommendations: readonly T[],
-  feedbackByCandidate: Readonly<Record<string, DashboardFeedbackAction | undefined>>,
+  feedbackByCandidate: Readonly<Record<string, FeedbackProjection | undefined>>,
   state: DashboardQueryState
 ): T[] {
   const query = state.q.trim().toLocaleLowerCase();
@@ -257,23 +259,27 @@ const RUN_STATUS_PRESENTATION: Record<
 
 function matchesView(
   view: DashboardView,
-  feedback: DashboardFeedbackAction | undefined,
+  feedback: FeedbackProjection | undefined,
   selected: boolean | undefined
 ) {
-  if (view === "today") return selected !== false && feedback !== "dismiss";
-  if (view === "saved") return feedback === "save";
-  if (view === "dismissed") return feedback === "dismiss";
-  if (view === "promoted") return feedback === "promote";
+  if (view === "today") return selected !== false && !feedback?.dismissed;
+  if (view === "saved") return Boolean(feedback?.saved && !feedback.dismissed);
+  if (view === "dismissed") return Boolean(feedback?.dismissed);
+  if (view === "promoted") return Boolean(feedback?.promoted && !feedback.dismissed);
   return true;
 }
 
 function matchesFeedback(
   filter: DashboardFeedbackFilter,
-  feedback: DashboardFeedbackAction | undefined
+  feedback: FeedbackProjection | undefined
 ) {
   if (filter === "all") return true;
-  if (filter === "none") return feedback === undefined;
-  return feedback === filter;
+  if (filter === "none") {
+    return !feedback || (!feedback.saved && !feedback.promoted && !feedback.dismissed);
+  }
+  if (filter === "save") return Boolean(feedback?.saved && !feedback.dismissed);
+  if (filter === "promote") return Boolean(feedback?.promoted && !feedback.dismissed);
+  return Boolean(feedback?.dismissed);
 }
 
 function recommendationTags(item: DashboardRecommendation): string[] {
