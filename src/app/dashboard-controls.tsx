@@ -238,6 +238,9 @@ export function DashboardControls({
         <p id="dashboard-limit-current" className="dashboard-limit-current" aria-live="polite">
           当前最多显示 {visibleLimit} 篇；可用结果不足时不会补齐。
         </p>
+        <p className="dashboard-limit-boundary">
+          显示数量不会改变每日生成数量。
+        </p>
         {limitError ? <p id="dashboard-limit-error" className="dashboard-limit-error" role="alert">{limitError}</p> : null}
       </fieldset>
 
