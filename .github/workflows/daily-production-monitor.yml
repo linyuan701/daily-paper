@@ -1,0 +1,56 @@
+name: Daily production monitor
+
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: "Check policy to exercise; manual runs are read-only by default"
+        required: true
+        default: first
+        type: choice
+        options:
+          - first
+          - final
+      dryRun:
+        description: "Do not create, update, comment on, or close issues"
+        required: true
+        default: true
+        type: boolean
+  schedule:
+    - cron: "17 10 * * *"
+      timezone: "Asia/Shanghai"
+    - cron: "17 12 * * *"
+      timezone: "Asia/Shanghai"
+
+permissions:
+  contents: read
+  actions: read
+  issues: write
+
+concurrency:
+  group: daily-production-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    name: Observe scheduled daily production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      MONITOR_PHASE: ${{ github.event.schedule == '17 12 * * *' && 'final' || inputs.phase || 'first' }}
+      MONITOR_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dryRun || false }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Inspect production run and notification evidence
+        run: node scripts/daily-production-monitor.mjs

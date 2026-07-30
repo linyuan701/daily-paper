@@ -328,7 +328,9 @@ test("cloud daily workflow migrates before invoking the existing CLI", () => {
 });
 
 test("scheduled daily CLI emits a bounded structured daily_notification result", () => {
-  assert.match(dailyCloudRunner, /writeNotificationResult:\s*\(result\)\s*=>\s*console\.log\(JSON\.stringify\(result\)\)/);
+  assert.match(dailyCloudRunner, /writeNotificationResult:\s*\(result\)\s*=>\s*\{/);
+  assert.match(dailyCloudRunner, /notificationResult\s*=\s*result/);
+  assert.match(dailyCloudRunner, /console\.log\(JSON\.stringify\(result\)\)/);
   assert.match(dailyCli, /event:\s*["']daily_notification["']/);
   assert.match(dailyCli, /deliveryStatus:\s*["']skipped["']/);
   assert.match(dailyCli, /reason:\s*pipeline\.disposition/);
@@ -341,6 +343,17 @@ test("scheduled daily CLI emits a bounded structured daily_notification result",
     "feed and message preparation must complete before claiming external notification delivery"
   );
   assert.doesNotMatch(dailyCloudRunner, /delivery\.attempts|error\.message|process\.env\.(?:DATABASE_URL|NOTIFICATION_SMTP_PASS)/);
+});
+
+test("cloud daily workflow uploads a short-lived redacted result contract", () => {
+  assert.match(workflow, /DAILY_PRODUCTION_RESULT_PATH:\s*artifacts\/daily-production-result-v1\.json/);
+  assert.match(workflow, /uses:\s*actions\/upload-artifact@v7/);
+  assert.match(workflow, /name:\s*daily-production-result-v1-\$\{\{ github\.run_attempt \}\}/);
+  assert.match(workflow, /if:\s*always\(\)/);
+  assert.match(workflow, /retention-days:\s*14/);
+  assert.match(dailyCloudRunner, /schemaVersion:\s*1/);
+  assert.match(dailyCloudRunner, /pipeline:\s*input\.pipeline\s*\?\?\s*null/);
+  assert.match(dailyCloudRunner, /notification:\s*input\.notification\s*\?\?\s*null/);
 });
 
 test("cloud daily workflow contains no plaintext credentials or Worker trigger", () => {
