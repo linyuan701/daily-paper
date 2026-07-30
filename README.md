@@ -88,6 +88,8 @@ Cloud Mode keeps the Windows/SQLite path intact and runs the persisted daily pip
 
 The Cloud CLI accepts `DAILY_RECOMMENDATION_LIMIT` through its process environment with the same strict validation as Local Mode. The production workflow mapping remains intentionally unchanged while the v0.2 scheduled-notification acceptance gate is open, so its effective value stays at the default `20` until that separate deployment setting is approved.
 
+`DAILY_RECOMMENDATION_LIMIT` is the pipeline generation limit. The Dashboard `limit=1..30` URL parameter is only a visible-item limit for recommendations already present in the selected feed: **显示数量不会改变每日生成数量**. A Dashboard URL can neither change the scheduler environment nor generate missing recommendations for a historical run.
+
 Setup summary:
 
 1. Create a Neon database in a region near the instance owner. The first personal instance uses AWS Frankfurt (`eu-central-1`), but no provider region is hardcoded.

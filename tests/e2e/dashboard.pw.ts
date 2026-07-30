@@ -161,6 +161,7 @@ test("visible limit is restored from the URL and quick options update the sharea
   });
 
   await page.goto("/?limit=15");
+  await expect(page.getByText("显示数量不会改变每日生成数量。")).toBeVisible();
   await expect(page.getByRole("article")).toHaveCount(15);
   await expect(page.locator("#dashboard-limit")).toHaveValue("15");
 
