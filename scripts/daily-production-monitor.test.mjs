@@ -43,11 +43,31 @@ test("computes the due Shanghai trigger and previous business date with the 08:1
   assert.equal(resolveExpectedSchedule("2024-03-01T02:17:00.000Z").businessDate, "2024-02-29");
 });
 
-test("finds a successful scheduled run for the expected business date", () => {
+test("scheduled run completes normally with its artifact evidence", () => {
   const result = evaluateProductionState(healthyInput());
   assert.equal(result.overall, "healthy");
   assert.equal(result.actionsRun.id, 1001);
   assert.equal(result.pipeline.runId, "run-2026-07-30");
+});
+
+test("manual follower blocked by preflight does not replace the scheduled run", () => {
+  const input = healthyInput();
+  input.runs.push({
+    id: 1002,
+    event: "workflow_dispatch",
+    status: "completed",
+    conclusion: "success",
+    createdAt: "2026-07-31T01:10:00.000Z",
+    startedAt: "2026-07-31T01:10:00.000Z",
+    completedAt: "2026-07-31T01:11:00.000Z",
+    githubAttempt: 1,
+    url: "https://github.com/example/daily-paper/actions/runs/1002"
+  });
+  input.evidenceByRun["1002"] = [];
+
+  const result = evaluateProductionState(input);
+  assert.equal(result.overall, "healthy");
+  assert.equal(result.actionsRun.id, 1001);
 });
 
 test("orchestrates the exact daily workflow through a mocked GitHub API", async () => {
@@ -111,6 +131,19 @@ test("marks a failed Actions run unhealthy", () => {
   assert.equal(result.reason, "actions_conclusion_failed");
 });
 
+test("pipeline failed evidence is unhealthy even when Actions concludes success", () => {
+  const input = healthyInput();
+  Object.assign(pipelineRecord(input), {
+    status: "failed",
+    retryable: false,
+    failedStage: "rerank"
+  });
+  const result = evaluateProductionState(input);
+  assert.equal(result.overall, "unhealthy");
+  assert.equal(result.reason, "pipeline_terminal_failure");
+  assert.equal(result.pipeline.failedStage, "rerank");
+});
+
 test("accepts complete_with_warnings as a successful terminal state", () => {
   const input = healthyInput();
   pipelineRecord(input).status = "complete_with_warnings";
@@ -118,18 +151,34 @@ test("accepts complete_with_warnings as a successful terminal state", () => {
   assert.equal(evaluateProductionState(input).overall, "healthy");
 });
 
-test("accepts a sent SMTP notification with a passing dashboard contract", () => {
+test("notification SENT is healthy with a passing SMTP dashboard contract", () => {
   const result = evaluateProductionState(healthyInput());
   assert.equal(result.notification.deliveryStatus, "sent");
+  assert.equal(result.notification.persistedDeliveryStatus, "SENT");
   assert.equal(result.notification.channel, "email");
   assert.equal(result.providerAccepted, true);
   assert.equal(result.inboxConfirmation, "user_confirmation_required");
+});
+
+test("notification SENDING is unhealthy as delivery_outcome_unknown", () => {
+  const input = healthyInput();
+  Object.assign(notificationRecord(input), {
+    deliveryStatus: "skipped",
+    persistedDeliveryStatus: "SENDING",
+    channel: "none",
+    reason: "delivery_outcome_unknown",
+    deduplicated: true
+  });
+  const result = evaluateProductionState(input);
+  assert.equal(result.overall, "unhealthy");
+  assert.equal(result.reason, "notification_delivery_outcome_unknown");
 });
 
 test("marks a skipped notification unhealthy", () => {
   const input = healthyInput();
   Object.assign(notificationRecord(input), {
     deliveryStatus: "skipped",
+    persistedDeliveryStatus: null,
     channel: "none",
     reason: "configuration_incomplete"
   });
@@ -142,6 +191,7 @@ test("marks a failed notification unhealthy without provider error text", () => 
   const input = healthyInput();
   Object.assign(notificationRecord(input), {
     deliveryStatus: "failed",
+    persistedDeliveryStatus: null,
     channel: "none",
     errorCategory: "delivery_failed"
   });
@@ -163,7 +213,7 @@ test("detects more than one sent result for the same pipeline runId", () => {
   assert.equal(result.duplicateCount, 1);
 });
 
-test("accepts an already_succeeded recovery only when it skips a previously sent runId", () => {
+test("accepts an already_succeeded recovery only when persisted SENT was observed previously", () => {
   const input = healthyInput();
   input.runs.push({
     id: 1004,
@@ -187,8 +237,9 @@ test("accepts an already_succeeded recovery only when it skips a previously sent
       {
         ...notificationRecord(input),
         deliveryStatus: "skipped",
+        persistedDeliveryStatus: "SENT",
         channel: "none",
-        reason: "already_succeeded",
+        reason: "already_sent",
         deduplicated: true
       }
     ]
@@ -198,6 +249,22 @@ test("accepts an already_succeeded recovery only when it skips a previously sent
   assert.equal(result.actionsRun.id, 1004);
   assert.equal(result.pipeline.disposition, "already_succeeded");
   assert.equal(result.duplicateCount, 0);
+});
+
+test("already_running remains pending at the first check and unhealthy at the final check", () => {
+  const first = healthyInput();
+  first.phase = "first";
+  Object.assign(pipelineRecord(first), {
+    status: "running",
+    disposition: "already_running"
+  });
+  assert.equal(evaluateProductionState(first).reason, "pipeline_already_running");
+  assert.equal(evaluateProductionState(first).overall, "pending");
+
+  const final = structuredClone(first);
+  final.phase = "final";
+  assert.equal(evaluateProductionState(final).reason, "pipeline_still_already_running");
+  assert.equal(evaluateProductionState(final).overall, "unhealthy");
 });
 
 test("detects a pipeline businessDate mismatch", () => {

@@ -11,6 +11,10 @@ const monitorScript = readFileSync(
   new URL("./daily-production-monitor.mjs", import.meta.url),
   "utf8"
 );
+const evidenceScript = readFileSync(
+  new URL("./daily-production-evidence.mjs", import.meta.url),
+  "utf8"
+);
 const monitor = YAML.parse(monitorText);
 const daily = YAML.parse(dailyText);
 
@@ -77,4 +81,15 @@ test("daily producer uploads only the versioned redacted result artifact", () =>
   assert.equal(upload.with.name, "daily-production-result-v1-${{ github.run_attempt }}");
   assert.equal(upload.with.path, "artifacts/daily-production-result-v1.json");
   assert.equal(upload.with["retention-days"], 14);
+  const persisted = dailyJob.steps.find(
+    (step) => step.name === "Check persisted business run before migration"
+  );
+  const pipeline = dailyJob.steps.find((step) => step.name === "Run daily pipeline");
+  for (const step of [persisted, pipeline]) {
+    assert.match(step.run, /set -o pipefail/);
+    assert.match(step.run, /node scripts\/daily-production-evidence\.mjs/);
+    assert.match(step.run, /--business-date "\$RUN_DATE"/);
+  }
+  assert.doesNotMatch(evidenceScript, /DATABASE_URL|SMTP_PASS|ZOTERO_KEY|LLM_API_KEY/);
+  assert.doesNotMatch(evidenceScript, /sendDailyNotification|nodemailer|prisma/);
 });

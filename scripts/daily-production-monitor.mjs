@@ -39,10 +39,14 @@ const CHANNELS = new Set(["email", "wecom", "none"]);
 const ERROR_CATEGORIES = new Set(["delivery_failed", "notification_internal"]);
 const NOTIFICATION_REASONS = new Set([
   "configuration_incomplete",
+  "already_sent",
+  "legacy_suppressed",
+  "delivery_outcome_unknown",
   "already_succeeded",
   "already_running",
   "missing_run_id"
 ]);
+const PERSISTED_DELIVERY_STATUSES = new Set(["SENT", "SENDING", "LEGACY_SUPPRESSED"]);
 
 export function resolveExpectedSchedule(now) {
   const instant = asValidDate(now);
@@ -159,6 +163,17 @@ export function evaluateProductionState({
       recommendedNextAction: "Verify the scheduled or recovery runDate before any authorized retry."
     });
   }
+  if (pipeline.disposition === "already_running") {
+    return finishResult(base, normalizedPhase === "first" ? {
+      overall: "pending",
+      reason: "pipeline_already_running",
+      recommendedNextAction: "Wait for the concurrency owner; do not dispatch a follower."
+    } : {
+      overall: "unhealthy",
+      reason: "pipeline_still_already_running",
+      recommendedNextAction: "Inspect the concurrency owner before authorizing any recovery."
+    });
+  }
   if (!["complete", "complete_with_warnings"].includes(pipeline.status)) {
     return finishResult(base, {
       overall: "unhealthy",
@@ -173,7 +188,7 @@ export function evaluateProductionState({
       recommendedNextAction: "Inspect the reported failed stage before authorizing recovery."
     });
   }
-  if (!pipeline.runId || !pipeline.businessDate || !pipeline.attempt) {
+  if (!pipeline.runId || !pipeline.businessDate) {
     return finishResult(base, {
       overall: "unhealthy",
       reason: "pipeline_contract_invalid",
@@ -200,9 +215,18 @@ export function evaluateProductionState({
   const notification = sentNotifications[0] ?? runNotifications.at(-1) ?? null;
   base.notification = notification;
   if (!notification || notification.deliveryStatus !== "sent") {
+    const reason = notification?.reason === "delivery_outcome_unknown" ||
+      notification?.persistedDeliveryStatus === "SENDING"
+      ? "notification_delivery_outcome_unknown"
+      : notification?.reason === "already_sent" ||
+          notification?.persistedDeliveryStatus === "SENT"
+        ? "notification_sent_evidence_incomplete"
+        : notification?.deliveryStatus === "failed"
+          ? "notification_failed"
+          : "notification_not_sent";
     return finishResult(base, {
       overall: "unhealthy",
-      reason: notification?.deliveryStatus === "failed" ? "notification_failed" : "notification_not_sent",
+      reason,
       recommendedNextAction: "Inspect SMTP configuration and provider status without sending a test email."
     });
   }
@@ -302,7 +326,8 @@ export function buildStepSummary(result, issueAction = "none") {
     `| application attempt | ${safeText(pipeline?.attempt, "unavailable")} |`,
     `| disposition / terminal status | ${safeText(pipeline?.disposition, "unavailable")} / ${safeText(pipeline?.status, "unavailable")} |`,
     `| retryable / failedStage | ${safeText(pipeline?.retryable, "unavailable")} / ${safeText(pipeline?.failedStage, "none")} |`,
-    `| notification deliveryStatus / channel | ${safeText(notification?.deliveryStatus, "unavailable")} / ${safeText(notification?.channel, "unavailable")} |`,
+    `| notification deliveryStatus / persisted / channel | ${safeText(notification?.deliveryStatus, "unavailable")} / ${safeText(notification?.persistedDeliveryStatus, "unavailable")} / ${safeText(notification?.channel, "unavailable")} |`,
+    `| notification reason | ${safeText(notification?.reason, "none")} |`,
     `| provider accepted | ${result.providerAccepted ? "yes" : "no"} |`,
     `| duplicate count | ${result.duplicateCount} |`,
     "| inbox confirmation | user_confirmation_required |",
@@ -516,6 +541,11 @@ function sanitizeNotificationRecord(value) {
     attempt: positiveInteger(value.attempt),
     runStatus: PIPELINE_STATUSES.has(value.runStatus) ? value.runStatus : null,
     deliveryStatus: value.deliveryStatus,
+    persistedDeliveryStatus: PERSISTED_DELIVERY_STATUSES.has(value.persistedDeliveryStatus)
+      ? value.persistedDeliveryStatus
+      : value.deliveryStatus === "sent"
+        ? "SENT"
+        : null,
     channel: value.channel,
     recommendationCount,
     errorCategory: value.errorCategory === undefined || value.errorCategory === null
