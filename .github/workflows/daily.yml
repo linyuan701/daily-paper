@@ -76,6 +76,7 @@ jobs:
       NOTIFICATION_SMTP_PASS: ${{ secrets.NOTIFICATION_SMTP_PASS }}
       NOTIFICATION_EMAIL_FROM: ${{ secrets.NOTIFICATION_SMTP_FROM }}
       NOTIFICATION_EMAIL_TO: ${{ secrets.NOTIFICATION_SMTP_TO }}
+      DAILY_PRODUCTION_RESULT_PATH: artifacts/daily-production-result-v1.json
 
     steps:
       - name: Check out repository
@@ -103,9 +104,15 @@ jobs:
 
       - name: Check persisted business run before migration
         id: persisted
+        shell: bash
         env:
           RUN_DATE: ${{ needs.preflight.outputs.run_date }}
-        run: npm run job:daily:guard -- --run-date "$RUN_DATE"
+        run: |
+          set -o pipefail
+          npm run job:daily:guard -- --run-date "$RUN_DATE" \
+            | node scripts/daily-production-evidence.mjs \
+                --output "$DAILY_PRODUCTION_RESULT_PATH" \
+                --business-date "$RUN_DATE"
 
       - name: Deploy PostgreSQL migrations
         if: steps.persisted.outputs.run_migration == 'true'
@@ -117,4 +124,17 @@ jobs:
         env:
           RUN_DATE: ${{ needs.preflight.outputs.run_date }}
         run: |
-          npm run job:daily:cloud -- --run-date "$RUN_DATE"
+          set -o pipefail
+          npm run job:daily:cloud -- --run-date "$RUN_DATE" \
+            | node scripts/daily-production-evidence.mjs \
+                --output "$DAILY_PRODUCTION_RESULT_PATH" \
+                --business-date "$RUN_DATE"
+
+      - name: Upload redacted production result
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: daily-production-result-v1-${{ github.run_attempt }}
+          path: artifacts/daily-production-result-v1.json
+          if-no-files-found: warn
+          retention-days: 14

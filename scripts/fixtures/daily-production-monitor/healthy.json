@@ -1,0 +1,53 @@
+{
+  "now": "2026-07-31T04:17:00.000Z",
+  "phase": "final",
+  "runs": [
+    {
+      "id": 1001,
+      "event": "schedule",
+      "status": "completed",
+      "conclusion": "success",
+      "createdAt": "2026-07-31T00:20:00.000Z",
+      "startedAt": "2026-07-31T00:21:00.000Z",
+      "completedAt": "2026-07-31T01:05:00.000Z",
+      "githubAttempt": 1,
+      "url": "https://github.com/example/daily-paper/actions/runs/1001"
+    }
+  ],
+  "evidenceByRun": {
+    "1001": [
+      {
+        "attempt": 1,
+        "source": "artifact",
+        "records": [
+          {
+            "event": "daily_pipeline",
+            "runId": "run-2026-07-30",
+            "businessDate": "2026-07-30",
+            "attempt": 1,
+            "disposition": "executed",
+            "status": "complete",
+            "retryable": false,
+            "failedStage": null
+          },
+          {
+            "event": "daily_notification",
+            "runId": "run-2026-07-30",
+            "businessDate": "2026-07-30",
+            "attempt": 1,
+            "runStatus": "complete",
+            "deliveryStatus": "sent",
+            "persistedDeliveryStatus": "SENT",
+            "channel": "email",
+            "recommendationCount": 12,
+            "errorCategory": null,
+            "reason": null,
+            "deduplicated": false,
+            "dashboardLinkIncluded": true,
+            "contentContractPassed": true
+          }
+        ]
+      }
+    ]
+  }
+}

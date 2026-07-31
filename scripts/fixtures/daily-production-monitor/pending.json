@@ -1,0 +1,18 @@
+{
+  "now": "2026-07-31T02:17:00.000Z",
+  "phase": "first",
+  "runs": [
+    {
+      "id": 1002,
+      "event": "schedule",
+      "status": "in_progress",
+      "conclusion": null,
+      "createdAt": "2026-07-31T01:30:00.000Z",
+      "startedAt": "2026-07-31T01:31:00.000Z",
+      "completedAt": null,
+      "githubAttempt": 1,
+      "url": "https://github.com/example/daily-paper/actions/runs/1002"
+    }
+  ],
+  "evidenceByRun": {}
+}

@@ -343,6 +343,17 @@ test("scheduled daily CLI emits a bounded structured daily_notification result",
   assert.doesNotMatch(dailyCloudRunner, /delivery\.attempts|error\.message|process\.env\.(?:DATABASE_URL|NOTIFICATION_SMTP_PASS)/);
 });
 
+test("cloud daily workflow uploads a short-lived redacted result contract", () => {
+  assert.match(workflow, /DAILY_PRODUCTION_RESULT_PATH:\s*artifacts\/daily-production-result-v1\.json/);
+  assert.match(workflow, /uses:\s*actions\/upload-artifact@v7/);
+  assert.match(workflow, /name:\s*daily-production-result-v1-\$\{\{ github\.run_attempt \}\}/);
+  assert.match(workflow, /if:\s*always\(\)/);
+  assert.match(workflow, /retention-days:\s*14/);
+  assert.match(workflow, /set -o pipefail/);
+  assert.match(workflow, /node scripts\/daily-production-evidence\.mjs/);
+  assert.doesNotMatch(dailyCloudRunner, /DAILY_PRODUCTION_RESULT_PATH|daily-production-evidence/);
+});
+
 test("cloud daily workflow contains no plaintext credentials or Worker trigger", () => {
   assert.doesNotMatch(workflow, /postgres(?:ql)?:\/\/[A-Za-z0-9]/i);
   assert.doesNotMatch(workflow, /qyapi\.weixin\.qq\.com\/cgi-bin\/webhook/i);
