@@ -157,7 +157,10 @@ test("doctor output contains status counts but never secret values", async () =>
 
 test("doctor accepts embedding credentials inherited from the LLM provider", async () => {
   const configured = validEnv
+    .replace('LLM_PROVIDER="nvidia"', 'LLM_PROVIDER="openai-compatible"')
     .replace('LLM_API_KEY=""', 'LLM_API_KEY="shared-key"')
+    .replace('LLM_BASE_URL="https://integrate.api.nvidia.com/v1"', 'LLM_BASE_URL="https://example.test/v1"')
+    .replace('LLM_MODEL="deepseek-ai/deepseek-v4-flash"', 'LLM_MODEL="generic-model"')
     .replace('LLM_API_BASE_URL=""', 'LLM_API_BASE_URL="https://example.test/v1"')
     .replace('EMBEDDING_MODEL=""', 'EMBEDDING_MODEL="embedding-model"');
 
@@ -188,6 +191,58 @@ test("doctor accepts a complete NVIDIA configuration and normalizes trailing sla
     const report = await inspectProject({ projectDir, platform: "win32", nodeVersion: "v22.18.0", environment: {} });
     assert.ok(report.checks.some((item) => item.level === "ready" && item.code === "llm"));
     assert.equal(report.summary.error, 0);
+  });
+});
+
+test("doctor does not inherit DeepSeek credentials into embeddings", async () => {
+  const configured = validEnv
+    .replace('LLM_PROVIDER="nvidia"', 'LLM_PROVIDER="deepseek"')
+    .replace('LLM_API_KEY=""', 'LLM_API_KEY="deepseek-only-key"')
+    .replace('LLM_BASE_URL="https://integrate.api.nvidia.com/v1"', 'LLM_BASE_URL="https://api.deepseek.com"')
+    .replace('LLM_MODEL="deepseek-ai/deepseek-v4-flash"', 'LLM_MODEL="deepseek-v4-flash"')
+    .replace('EMBEDDING_MODEL=""', 'EMBEDDING_MODEL="embedding-model"');
+
+  await withTempProject(configured, async (projectDir) => {
+    const report = await inspectProject({ projectDir, platform: "win32", nodeVersion: "v22.18.0", environment: {} });
+    assert.ok(report.checks.some((check) => check.level === "error" && check.code === "embedding"));
+  });
+});
+
+test("doctor accepts a complete DeepSeek official configuration and normalizes trailing slashes", async () => {
+  const configured = validEnv
+    .replace('LLM_PROVIDER="nvidia"', 'LLM_PROVIDER="deepseek"')
+    .replace('LLM_API_KEY=""', 'LLM_API_KEY="placeholder-key"')
+    .replace(
+      'LLM_BASE_URL="https://integrate.api.nvidia.com/v1"',
+      'LLM_BASE_URL="https://api.deepseek.com///"'
+    )
+    .replace('LLM_MODEL="deepseek-ai/deepseek-v4-flash"', 'LLM_MODEL="deepseek-v4-flash"');
+
+  await withTempProject(configured, async (projectDir) => {
+    const report = await inspectProject({ projectDir, platform: "win32", nodeVersion: "v22.18.0", environment: {} });
+    assert.ok(report.checks.some((item) => item.level === "ready" && item.code === "llm"));
+    assert.equal(report.summary.error, 0);
+  });
+});
+
+test("doctor rejects DeepSeek endpoint/model overrides without exposing secrets", async () => {
+  const configured = validEnv
+    .replace('LLM_PROVIDER="nvidia"', 'LLM_PROVIDER="deepseek"')
+    .replace('LLM_API_KEY=""', 'LLM_API_KEY="do-not-print-deepseek-key"')
+    .replace('LLM_BASE_URL="https://integrate.api.nvidia.com/v1"', 'LLM_BASE_URL="https://wrong.example.invalid/v1"');
+
+  await withTempProject(configured, async (projectDir) => {
+    const lines = [];
+    const result = await runDoctor({
+      projectDir,
+      platform: "win32",
+      nodeVersion: "v22.18.0",
+      environment: {},
+      logger: (line) => lines.push(line)
+    });
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.checks.some((item) => item.level === "error" && item.code === "llm"));
+    assert.equal(lines.join("\n").includes("do-not-print-deepseek-key"), false);
   });
 });
 

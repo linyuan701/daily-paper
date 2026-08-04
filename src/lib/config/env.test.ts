@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { EnvValidationError, getDeploymentCapabilities, loadEnv } from "./env";
-import { NVIDIA_NIM_BASE_URL, NVIDIA_NIM_MODEL } from "./llm";
+import {
+  DEEPSEEK_BASE_URL,
+  DEEPSEEK_MODEL,
+  NVIDIA_NIM_BASE_URL,
+  NVIDIA_NIM_MODEL
+} from "./llm";
 
 describe("deployment environment contract", () => {
   it("keeps an absent deployment mode backward-compatible with Local Mode", () => {
@@ -134,6 +139,37 @@ describe("deployment environment contract", () => {
     expect(env.LLM_MODEL).toBe(NVIDIA_NIM_MODEL);
   });
 
+  it("applies official DeepSeek defaults only for the explicit DeepSeek provider", () => {
+    const env = loadEnv({
+      DATABASE_URL: "file:./dev.db",
+      LLM_PROVIDER: "deepseek",
+      LLM_API_KEY: "placeholder-key"
+    });
+
+    expect(env.LLM_PROVIDER).toBe("deepseek");
+    expect(env.LLM_BASE_URL).toBe(DEEPSEEK_BASE_URL);
+    expect(env.LLM_API_BASE_URL).toBe(DEEPSEEK_BASE_URL);
+    expect(env.LLM_MODEL).toBe(DEEPSEEK_MODEL);
+  });
+
+  it("normalizes the official DeepSeek base URL and rejects provider overrides", () => {
+    const accepted = loadEnv({
+      DATABASE_URL: "file:./dev.db",
+      LLM_PROVIDER: "deepseek",
+      LLM_BASE_URL: `${DEEPSEEK_BASE_URL}///`,
+      LLM_MODEL: DEEPSEEK_MODEL
+    });
+    expect(accepted.LLM_BASE_URL).toBe(DEEPSEEK_BASE_URL);
+
+    expect(() => loadEnv({
+      DATABASE_URL: "file:./dev.db",
+      LLM_PROVIDER: "deepseek",
+      LLM_API_KEY: "do-not-print-deepseek-key",
+      LLM_BASE_URL: "https://example.invalid/v1",
+      LLM_MODEL: NVIDIA_NIM_MODEL
+    })).toThrowError(`LLM_PROVIDER=deepseek requires LLM_MODEL=${DEEPSEEK_MODEL}`);
+  });
+
   it("normalizes trailing slashes and gives the canonical base URL precedence", () => {
     const env = loadEnv({
       DATABASE_URL: "file:./dev.db",
@@ -185,7 +221,7 @@ describe("deployment environment contract", () => {
     expect(env.EMBEDDING_API_BASE_URL).toBe("https://legacy.example.invalid/v1/");
   });
 
-  it("does not inherit the canonical LLM base URL into embeddings", () => {
+  it("does not inherit provider-specific LLM credentials or base URLs into embeddings", () => {
     const env = loadEnv({
       DATABASE_URL: "file:./dev.db",
       LLM_PROVIDER: "nvidia",
@@ -195,8 +231,19 @@ describe("deployment environment contract", () => {
       EMBEDDING_MODEL: "embedding-model"
     });
 
-    expect(env.EMBEDDING_API_KEY).toBe("placeholder-key");
+    expect(env.EMBEDDING_API_KEY).toBeUndefined();
     expect(env.EMBEDDING_API_BASE_URL).toBeUndefined();
+
+    const deepseek = loadEnv({
+      DATABASE_URL: "file:./dev.db",
+      LLM_PROVIDER: "deepseek",
+      LLM_API_KEY: "placeholder-deepseek-key",
+      LLM_BASE_URL: DEEPSEEK_BASE_URL,
+      LLM_API_BASE_URL: "https://legacy-embedding.example.invalid/v1",
+      EMBEDDING_MODEL: "embedding-model"
+    });
+    expect(deepseek.EMBEDDING_API_KEY).toBeUndefined();
+    expect(deepseek.EMBEDDING_API_BASE_URL).toBeUndefined();
   });
 
   it.each(["LLM_BASE_URL", "LLM_API_BASE_URL"] as const)(

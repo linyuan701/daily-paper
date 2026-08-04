@@ -89,14 +89,14 @@ Setup summary:
 
 1. Create a Neon database in a region near the instance owner. The first personal instance uses AWS Frankfurt (`eu-central-1`), but no provider region is hardcoded.
 2. Create a GitHub Actions environment named `production`.
-3. Add required secrets: `DATABASE_URL`, `ZOTERO_ID`, `ZOTERO_KEY`, and the manually created NVIDIA NIM secret `NVIDIA_API_KEY`.
-4. Add `LLM_PROVIDER=nvidia`, `LLM_BASE_URL=https://integrate.api.nvidia.com/v1`, and `LLM_MODEL=deepseek-ai/deepseek-v4-flash` as GitHub Environment Variables. The provider must be set explicitly for NVIDIA; omitting it preserves the existing OpenAI-compatible workflow behavior. Notification settings remain optional.
+3. Add required secrets: `DATABASE_URL`, `ZOTERO_ID`, `ZOTERO_KEY`, and the manually created DeepSeek secret `DEEPSEEK_API_KEY`.
+4. Add `LLM_PROVIDER=deepseek`, `LLM_BASE_URL=https://api.deepseek.com`, and `LLM_MODEL=deepseek-v4-flash` as GitHub Environment Variables. Notification settings remain optional.
 5. Run **Cloud daily recommendations** manually once with the required strict `runDate` (`YYYY-MM-DD`). For production fallback, follow the [guarded manual procedure](docs/production-daily-manual-fallback.md).
 6. Keep or edit the template schedule, which defaults to 08:15 `Asia/Shanghai` (UTC 00:15).
 
-The workflow validates/generates the PostgreSQL client, applies the independent cloud migration history, and then invokes the existing `job:daily:cloud` CLI. Notification settings are optional; failures do not roll back persisted results. See [Cloud Mode A GitHub Actions runbook](docs/cloud-mode-a-github-actions.md) for the full Secrets/Variables, schedule, retry, and exit-code contract, and [NVIDIA NIM generative LLM configuration](docs/nvidia-nim-llm.md) for provider setup and isolated smoke testing.
+The workflow validates/generates the PostgreSQL client, applies the independent cloud migration history, and then invokes the existing `job:daily:cloud` CLI. Notification settings are optional; failures do not roll back persisted results. See [Cloud Mode A GitHub Actions runbook](docs/cloud-mode-a-github-actions.md) for the full Secrets/Variables, schedule, retry, and exit-code contract, and [DeepSeek official generative LLM configuration](docs/deepseek-official-llm.md) for provider setup and isolated smoke testing.
 
-For a controlled provider rollback, set `LLM_PROVIDER=openai-compatible` and configure the generic provider with `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL`. That explicit provider value makes the workflow select the legacy key even if `NVIDIA_API_KEY` remains stored. The deprecated `LLM_API_BASE_URL` Variable remains a fallback when `LLM_BASE_URL` is unset.
+For a controlled provider rollback to NVIDIA NIM, set `LLM_PROVIDER=nvidia`, restore the NVIDIA base/model Variables, and retain `NVIDIA_API_KEY`. The legacy generic `openai-compatible` provider also remains available through `LLM_API_KEY`. The deprecated `LLM_API_BASE_URL` Variable remains a fallback when `LLM_BASE_URL` is unset.
 
 An empty Cloud Mode database must build its low-frequency profile before recall can succeed. Run the separate **Cloud profile maintenance** workflow with `operation=sync`, use the Access-protected `/collections` page to select at least one primary or secondary collection, and then run the workflow again with `operation=refresh`. This workflow is manual-only and does not run the daily pipeline.
 

@@ -1,5 +1,7 @@
 import { AppError } from "../../lib/errors";
 import {
+  DEEPSEEK_BASE_URL,
+  DEEPSEEK_MODEL,
   NVIDIA_NIM_BASE_URL,
   NVIDIA_NIM_MODEL,
   type LlmProvider
@@ -43,7 +45,7 @@ export class UnavailableCandidateOutputProvider implements CandidateOutputProvid
 }
 
 export class GenericLlmCandidateOutputProvider implements CandidateOutputProvider {
-  readonly name: "generic-llm" | "nvidia-nim";
+  readonly name: "deepseek-official" | "generic-llm" | "nvidia-nim";
   private readonly provider: LlmProvider;
   private readonly endpoint: string;
   private readonly model: string;
@@ -53,9 +55,19 @@ export class GenericLlmCandidateOutputProvider implements CandidateOutputProvide
 
   constructor(private readonly options: GenericLlmProviderOptions) {
     this.provider = options.provider ?? "openai-compatible";
-    this.name = this.provider === "nvidia" ? "nvidia-nim" : "generic-llm";
+    this.name = this.provider === "nvidia"
+      ? "nvidia-nim"
+      : this.provider === "deepseek"
+        ? "deepseek-official"
+        : "generic-llm";
     this.endpoint = options.apiBaseUrl.replace(/\/+$/, "");
-    this.model = options.model ?? (this.provider === "nvidia" ? NVIDIA_NIM_MODEL : "gpt-4o-mini");
+    this.model = options.model ?? (
+      this.provider === "nvidia"
+        ? NVIDIA_NIM_MODEL
+        : this.provider === "deepseek"
+          ? DEEPSEEK_MODEL
+          : "gpt-4o-mini"
+    );
     this.timeoutMs = options.timeoutMs ?? 30_000;
     this.maxRetries = normalizeMaxRetries(options.maxRetries);
     this.concurrency = options.concurrency ?? 4;
@@ -120,7 +132,9 @@ export class GenericLlmCandidateOutputProvider implements CandidateOutputProvide
       response_format: { type: "json_object" },
       ...(this.provider === "nvidia"
         ? { chat_template_kwargs: { thinking: false } }
-        : {})
+        : this.provider === "deepseek"
+          ? { thinking: { type: "disabled" } }
+          : {})
     };
     const response = await fetchLlmCompletion(
       `${this.endpoint}/chat/completions`,
@@ -176,7 +190,13 @@ export function createCandidateOutputProvider(input: {
 }): CandidateOutputProvider {
   const provider = input.provider ?? "openai-compatible";
   const apiKey = input.apiKey?.trim();
-  const apiBaseUrl = input.apiBaseUrl?.trim() || (provider === "nvidia" ? NVIDIA_NIM_BASE_URL : undefined);
+  const apiBaseUrl = input.apiBaseUrl?.trim() || (
+    provider === "nvidia"
+      ? NVIDIA_NIM_BASE_URL
+      : provider === "deepseek"
+        ? DEEPSEEK_BASE_URL
+        : undefined
+  );
   const model = input.model?.trim();
 
   if (!apiKey || !apiBaseUrl) {
@@ -194,6 +214,12 @@ export function createCandidateOutputProvider(input: {
     (apiBaseUrl.replace(/\/+$/, "") !== NVIDIA_NIM_BASE_URL || (model && model !== NVIDIA_NIM_MODEL))
   ) {
     return new UnavailableCandidateOutputProvider("NVIDIA NIM configuration is invalid.");
+  }
+  if (
+    provider === "deepseek" &&
+    (apiBaseUrl.replace(/\/+$/, "") !== DEEPSEEK_BASE_URL || (model && model !== DEEPSEEK_MODEL))
+  ) {
+    return new UnavailableCandidateOutputProvider("DeepSeek official configuration is invalid.");
   }
 
   return new GenericLlmCandidateOutputProvider({
@@ -213,8 +239,8 @@ type LlmRequestOptions = {
 };
 
 const RETRYABLE_LLM_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
-const NVIDIA_GATEWAY_RETRY_STATUS_MIN = 520;
-const NVIDIA_GATEWAY_RETRY_STATUS_MAX = 529;
+const GATEWAY_RETRY_STATUS_MIN = 520;
+const GATEWAY_RETRY_STATUS_MAX = 529;
 const MAX_LLM_RETRIES = 5;
 const LLM_RETRY_BACKOFF_MS = 250;
 
@@ -261,17 +287,19 @@ function providerStatusError(status: number, attempts: number, options: LlmReque
       ? "pending_response"
       : status === 401
         ? "authentication_failed"
-        : status === 403
-          ? "authorization_failed"
-          : status === 408
-            ? "request_timeout_status"
-            : status === 429
-              ? "rate_limited"
-              : isRetryableLlmStatus(status)
-                ? "upstream_unavailable"
-                : status >= 400 && status < 500
-                  ? "request_rejected"
-                  : "unexpected_status";
+        : status === 402
+          ? "insufficient_balance"
+          : status === 403
+            ? "authorization_failed"
+            : status === 408
+              ? "request_timeout_status"
+              : status === 429
+                ? "rate_limited"
+                : isRetryableLlmStatus(status)
+                  ? "upstream_unavailable"
+                  : status >= 400 && status < 500
+                    ? "request_rejected"
+                    : "unexpected_status";
 
   return new AppError(
     "CANDIDATE_OUTPUT_PROVIDER_HTTP_ERROR",
@@ -315,7 +343,7 @@ function waitForRetry(milliseconds: number) {
 
 function isRetryableLlmStatus(status: number) {
   return RETRYABLE_LLM_STATUS_CODES.has(status) || (
-    status >= NVIDIA_GATEWAY_RETRY_STATUS_MIN && status <= NVIDIA_GATEWAY_RETRY_STATUS_MAX
+    status >= GATEWAY_RETRY_STATUS_MIN && status <= GATEWAY_RETRY_STATUS_MAX
   );
 }
 

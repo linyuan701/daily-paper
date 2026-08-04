@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { NVIDIA_NIM_BASE_URL, NVIDIA_NIM_MODEL } from "../../lib/config/llm";
+import {
+  DEEPSEEK_BASE_URL,
+  DEEPSEEK_MODEL,
+  NVIDIA_NIM_BASE_URL,
+  NVIDIA_NIM_MODEL
+} from "../../lib/config/llm";
 import {
   createCandidateOutputProvider,
   GenericLlmCandidateOutputProvider,
@@ -48,6 +53,37 @@ describe("createCandidateOutputProvider", () => {
     expect(body.messages[1].role).toBe("user");
   });
 
+  it("uses the exact DeepSeek official Chat Completions contract with thinking disabled", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(labelsEnvelope()));
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    const provider = createCandidateOutputProvider({
+      provider: "deepseek",
+      apiKey: "deepseek-secret",
+      apiBaseUrl: `${DEEPSEEK_BASE_URL}///`,
+      maxRetries: 0
+    });
+
+    await provider.generateLabels(candidateFixture());
+
+    expect(provider.getHealth()).toMatchObject({
+      name: "deepseek-official",
+      endpoint: DEEPSEEK_BASE_URL,
+      model: DEEPSEEK_MODEL
+    });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${DEEPSEEK_BASE_URL}/chat/completions`);
+    expect(new Headers(init.headers).get("Authorization")).toBe("Bearer deepseek-secret");
+    const body = JSON.parse(String(init.body));
+    expect(body).toMatchObject({
+      model: DEEPSEEK_MODEL,
+      temperature: 0.2,
+      stream: false,
+      response_format: { type: "json_object" },
+      thinking: { type: "disabled" }
+    });
+    expect(body).not.toHaveProperty("chat_template_kwargs");
+  });
+
   it("keeps the legacy OpenAI-compatible adapter generic", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(labelsEnvelope()));
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
@@ -77,6 +113,31 @@ describe("createCandidateOutputProvider", () => {
       endpoint: NVIDIA_NIM_BASE_URL,
       model: NVIDIA_NIM_MODEL
     });
+  });
+
+  it("uses official defaults only for the DeepSeek provider", () => {
+    const provider = createCandidateOutputProvider({ provider: "deepseek", apiKey: "token" });
+    expect(provider.getHealth()).toMatchObject({
+      name: "deepseek-official",
+      endpoint: DEEPSEEK_BASE_URL,
+      model: DEEPSEEK_MODEL
+    });
+  });
+
+  it("rejects DeepSeek endpoint or model overrides before fetch", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
+    for (const input of [
+      { provider: "deepseek" as const, apiKey: "token", apiBaseUrl: "https://example.test/v1" },
+      { provider: "deepseek" as const, apiKey: "token", model: NVIDIA_NIM_MODEL }
+    ]) {
+      const provider = createCandidateOutputProvider(input);
+      expect(provider).toBeInstanceOf(UnavailableCandidateOutputProvider);
+      await expect(provider.generateLabels(candidateFixture())).rejects.toMatchObject({
+        code: "CANDIDATE_OUTPUT_UNAVAILABLE"
+      });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects NVIDIA endpoint or model overrides before fetch", async () => {
@@ -209,7 +270,7 @@ describe("createCandidateOutputProvider", () => {
     });
   });
 
-  it.each([401, 403, 408, 422])("does not retry HTTP %i", async (status) => {
+  it.each([401, 402, 403, 408, 422])("does not retry HTTP %i", async (status) => {
     const fetchMock = vi.fn().mockResolvedValue(statusResponse(status));
     vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
 

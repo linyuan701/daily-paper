@@ -89,6 +89,18 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Select DeepSeek official LLM credential
+        if: env.LLM_PROVIDER == 'deepseek'
+        shell: bash
+        env:
+          SELECTED_LLM_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          if [[ -z "$SELECTED_LLM_API_KEY" ]]; then
+            echo "::error::Missing required GitHub Secret DEEPSEEK_API_KEY for LLM_PROVIDER=deepseek."
+            exit 1
+          fi
+          printf '%s=%s\n' LLM_API_KEY "$SELECTED_LLM_API_KEY" >> "$GITHUB_ENV"
+
       - name: Select NVIDIA LLM credential
         if: env.LLM_PROVIDER == 'nvidia'
         shell: bash

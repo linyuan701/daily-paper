@@ -306,10 +306,12 @@ test("cloud daily workflow fixes cloud capabilities and references secrets symbo
   }
   assert.match(workflow, /LLM_PROVIDER: \$\{\{ vars\.LLM_PROVIDER \}\}/);
   assert.doesNotMatch(workflow, /^\s+LLM_API_KEY:/m);
+  assert.match(workflow, /name: Select DeepSeek official LLM credential[\s\S]*?if: env\.LLM_PROVIDER == ['"]deepseek['"][\s\S]*?SELECTED_LLM_API_KEY: \$\{\{ secrets\.DEEPSEEK_API_KEY \}\}/);
   assert.match(workflow, /name: Select NVIDIA LLM credential[\s\S]*?if: env\.LLM_PROVIDER == ['"]nvidia['"][\s\S]*?SELECTED_LLM_API_KEY: \$\{\{ secrets\.NVIDIA_API_KEY \}\}/);
   assert.match(workflow, /name: Select legacy OpenAI-compatible LLM credential[\s\S]*?if: env\.LLM_PROVIDER == ['"]['"] \|\| env\.LLM_PROVIDER == ['"]openai-compatible['"][\s\S]*?SELECTED_LLM_API_KEY: \$\{\{ secrets\.LLM_API_KEY \}\}/);
   assert.match(workflow, /printf ['"]%s=%s\\n['"] LLM_API_KEY ["']\$SELECTED_LLM_API_KEY["'] >> ["']\$GITHUB_ENV["']/);
   assert.doesNotMatch(workflow, /secrets\.NVIDIA_API_KEY\s*\|\|/);
+  assert.doesNotMatch(workflow, /secrets\.DEEPSEEK_API_KEY\s*\|\|/);
   assert.match(workflow, /LLM_BASE_URL: \$\{\{ vars\.LLM_BASE_URL \|\| vars\.LLM_API_BASE_URL \}\}/);
   assert.doesNotMatch(workflow, /^\s+LLM_API_BASE_URL:/m);
   for (const name of [
@@ -328,6 +330,7 @@ test("cloud daily workflow fixes cloud capabilities and references secrets symbo
 
 test("cloud daily workflow migrates before invoking the existing CLI", () => {
   const commands = [
+    "Select DeepSeek official LLM credential",
     "Select NVIDIA LLM credential",
     "Select legacy OpenAI-compatible LLM credential",
     "npm ci",

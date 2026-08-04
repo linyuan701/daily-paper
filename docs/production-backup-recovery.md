@@ -343,7 +343,7 @@ Rotate other potentially exposed secrets one provider at a time, keeping old and
 | Secret family | Consumer/location | Verification before revocation |
 |---|---|---|
 | Zotero ID/API key | GitHub production Environment | Approved profile sync returns only expected IDs/counts; no key in logs |
-| LLM key/base URL | GitHub production Environment (`NVIDIA_API_KEY` Secret; `LLM_PROVIDER`, `LLM_BASE_URL`, and `LLM_MODEL` Variables) | Approved candidate summary/label operation succeeds; provider usage is attributable while logs expose no credential |
+| LLM key/base URL | GitHub production Environment (`DEEPSEEK_API_KEY` primary and retained `NVIDIA_API_KEY` rollback Secrets; `LLM_PROVIDER`, `LLM_BASE_URL`, and `LLM_MODEL` Variables) | Approved candidate summary/label operation succeeds; provider usage is attributable while logs expose no credential |
 | SMTP user/password/from/to | GitHub production Environment | Approved test notification reaches only the expected recipient; logs remain redacted |
 | WeCom webhook | GitHub production Environment | Approved test reaches the expected bot/room; revoke the old webhook afterward |
 | Cloudflare API token/account ID | Deployment secret store or operator secret manager | Least-privilege identity can inspect/deploy only the intended account and Worker |
@@ -387,7 +387,7 @@ Verify the active version ID, Access enforcement, readiness, representative read
 
 Disable `daily.yml` and `profile.yml` as shown in section 1 before changing a ref. A scheduled workflow executes from the default branch; rolling back only a feature branch does not change the schedule. Restore the known-good code and workflow to the default branch with a reviewed revert/rollback pull request. Do not force-push or reset the protected default branch.
 
-An LLM-provider rollback does not require a code rollback. With workflows disabled, set `LLM_PROVIDER=openai-compatible`, set the generic provider's full `LLM_MODEL`, and provide its key through the legacy `LLM_API_KEY` Secret. That explicit provider value makes the workflow select `LLM_API_KEY` even if `NVIDIA_API_KEY` remains stored. Prefer the canonical `LLM_BASE_URL` Variable; the legacy `LLM_API_BASE_URL` Variable is used only when the canonical name is unset. Review both base Variables before re-enabling because `LLM_BASE_URL` wins, and verify the provider with one approved run before revoking either credential.
+An LLM-provider rollback does not require a code rollback. With workflows disabled, restore `LLM_PROVIDER=nvidia`, `LLM_BASE_URL=https://integrate.api.nvidia.com/v1`, and `LLM_MODEL=deepseek-ai/deepseek-v4-flash`; the workflow then selects the retained `NVIDIA_API_KEY`. The generic `openai-compatible` provider remains available through the legacy `LLM_API_KEY` Secret. Prefer the canonical `LLM_BASE_URL` Variable; the legacy `LLM_API_BASE_URL` Variable is used only when the canonical name is unset. Review both base Variables before re-enabling and verify the provider with its isolated manual smoke workflow before any daily run.
 
 For an approved manual recovery run, `gh workflow run --ref` accepts a branch or tag, not an arbitrary raw SHA. If the evidence has only a SHA, first create a reviewed immutable recovery tag or protected branch pointing to it through the repository's normal change controls. Then dispatch the workflow version at that ref:
 

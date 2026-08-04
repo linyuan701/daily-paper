@@ -34,22 +34,23 @@ In the repository, create an Actions environment named `production`. Add these r
 | `DATABASE_URL` | Neon PostgreSQL connection string |
 | `ZOTERO_ID` | Zotero user or group identifier |
 | `ZOTERO_KEY` | Zotero Web API key |
+| `DEEPSEEK_API_KEY` | DeepSeek official API key, created manually in the GitHub Environment |
 | `NVIDIA_API_KEY` | NVIDIA NIM API key, created manually in the GitHub Environment |
 
 Add these environment variables as needed:
 
 | Variable | Purpose |
 |---|---|
-| `LLM_PROVIDER` | `nvidia`; required to select NVIDIA (omitting it preserves the legacy OpenAI-compatible provider) |
-| `LLM_BASE_URL` | `https://integrate.api.nvidia.com/v1` |
-| `LLM_MODEL` | `deepseek-ai/deepseek-v4-flash` |
+| `LLM_PROVIDER` | `deepseek`; selects the DeepSeek official credential |
+| `LLM_BASE_URL` | `https://api.deepseek.com` |
+| `LLM_MODEL` | `deepseek-v4-flash` |
 | `NOTIFICATION_DASHBOARD_URL` | Optional dashboard URL included in notifications |
 
-The NVIDIA key must be added manually; the repository contains no credential. The workflow maps only `NVIDIA_API_KEY` to the runtime `LLM_API_KEY` when `LLM_PROVIDER=nvidia`, with no cross-provider Secret fallback. `LLM_BASE_URL` takes precedence over the deprecated `LLM_API_BASE_URL` Variable, and trailing slashes are normalized. With `LLM_PROVIDER=nvidia`, omitted base/model values use the exact values above, while any different endpoint or model is rejected before provider calls.
+The DeepSeek key must be added manually; the repository contains no credential. The workflow maps only `DEEPSEEK_API_KEY` to the runtime `LLM_API_KEY` when `LLM_PROVIDER=deepseek`, with no cross-provider Secret fallback. `LLM_BASE_URL` takes precedence over the deprecated `LLM_API_BASE_URL` Variable, and trailing slashes are normalized. With `LLM_PROVIDER=deepseek`, omitted base/model values use the exact values above, while any different endpoint or model is rejected before provider calls.
 
-Use [NVIDIA NIM generative LLM configuration](./nvidia-nim-llm.md) for the exact runtime contract and the isolated manual smoke test. Base URLs must be HTTP(S) URLs without embedded credentials, query parameters, or fragments.
+Use [DeepSeek official generative LLM configuration](./deepseek-official-llm.md) for the exact runtime contract and the isolated manual smoke test. Base URLs must be HTTP(S) URLs without embedded credentials, query parameters, or fragments.
 
-For a controlled rollback to a generic OpenAI-compatible provider, set `LLM_PROVIDER=openai-compatible`, add the generic key as the legacy `LLM_API_KEY` Secret, and set that provider's full model name. The explicit provider value makes the workflow select `LLM_API_KEY` even if `NVIDIA_API_KEY` remains stored. Prefer `LLM_BASE_URL`; an existing `LLM_API_BASE_URL` Variable remains supported only when the canonical name is unset. If a provider puts credentials in its URL, do not store that URL as a GitHub Variable; revise the deployment under secret-handling review instead.
+For a controlled rollback to NVIDIA, set `LLM_PROVIDER=nvidia`, `LLM_BASE_URL=https://integrate.api.nvidia.com/v1`, and `LLM_MODEL=deepseek-ai/deepseek-v4-flash`; the workflow then selects only `NVIDIA_API_KEY`. For a generic provider, set `LLM_PROVIDER=openai-compatible` and use the legacy `LLM_API_KEY` Secret. Prefer `LLM_BASE_URL`; an existing `LLM_API_BASE_URL` Variable remains supported only when the canonical name is unset.
 
 ## 3. Optional notifications
 

@@ -13,6 +13,8 @@ import {
 
 const NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_NIM_MODEL = "deepseek-ai/deepseek-v4-flash";
+const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
+const DEEPSEEK_MODEL = "deepseek-v4-flash";
 
 function check(level, code, message) {
   return { level, code, message };
@@ -81,8 +83,13 @@ function validateLlm(checks, env) {
     return;
   }
 
-  if (provider && provider !== "nvidia" && provider !== "openai-compatible") {
-    checks.push(check("error", "llm", "LLM_PROVIDER must be nvidia or openai-compatible."));
+  if (
+    provider &&
+    provider !== "deepseek" &&
+    provider !== "nvidia" &&
+    provider !== "openai-compatible"
+  ) {
+    checks.push(check("error", "llm", "LLM_PROVIDER must be deepseek, nvidia, or openai-compatible."));
     return;
   }
 
@@ -102,6 +109,25 @@ function validateLlm(checks, env) {
     checks.push(hasKey
       ? check("ready", "llm", "NVIDIA LLM configuration is complete.")
       : check("warn", "llm", "NVIDIA LLM API key is not configured (optional)."));
+    return;
+  }
+
+  if (provider === "deepseek") {
+    const effectiveBaseUrl = baseUrl ?? DEEPSEEK_BASE_URL;
+    const effectiveModel = model ?? DEEPSEEK_MODEL;
+    let valid = true;
+    if (effectiveBaseUrl !== DEEPSEEK_BASE_URL) {
+      checks.push(check("error", "llm", "DeepSeek LLM requires the official DeepSeek base URL."));
+      valid = false;
+    }
+    if (effectiveModel !== DEEPSEEK_MODEL) {
+      checks.push(check("error", "llm", `DeepSeek LLM requires LLM_MODEL=${DEEPSEEK_MODEL}.`));
+      valid = false;
+    }
+    if (!valid) return;
+    checks.push(hasKey
+      ? check("ready", "llm", "DeepSeek official LLM configuration is complete.")
+      : check("warn", "llm", "DeepSeek API key is not configured (optional)."));
     return;
   }
 
@@ -189,8 +215,14 @@ export async function inspectProject({
   if (!embeddingRequested) {
     checks.push(check("warn", "embedding", "Embedding provider is not configured (optional)."));
   } else {
-    const hasEffectiveKey = hasValue(env, "EMBEDDING_API_KEY") || hasValue(env, "LLM_API_KEY");
-    const hasEffectiveBaseUrl = hasValue(env, "EMBEDDING_API_BASE_URL") || hasValue(env, "LLM_API_BASE_URL");
+    const llmProvider = env.LLM_PROVIDER?.trim().toLowerCase();
+    const mayInheritLegacyLlm = !llmProvider || llmProvider === "openai-compatible";
+    const hasEffectiveKey = hasValue(env, "EMBEDDING_API_KEY") || (
+      mayInheritLegacyLlm && hasValue(env, "LLM_API_KEY")
+    );
+    const hasEffectiveBaseUrl = hasValue(env, "EMBEDDING_API_BASE_URL") || (
+      mayInheritLegacyLlm && hasValue(env, "LLM_API_BASE_URL")
+    );
     if (hasEffectiveKey && hasEffectiveBaseUrl && hasValue(env, "EMBEDDING_MODEL")) {
       checks.push(check("ready", "embedding", "Embedding provider configuration is complete."));
     } else {

@@ -5,6 +5,8 @@ import dotenv from "dotenv";
 
 const NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_NIM_MODEL = "deepseek-ai/deepseek-v4-flash";
+const DEEPSEEK_BASE_URL = "https://api.deepseek.com";
+const DEEPSEEK_MODEL = "deepseek-v4-flash";
 
 function result(level, code, message) {
   return { level, code, message };
@@ -71,8 +73,13 @@ function inspectLlmEnvironment(env, mode) {
   }
   if (checks.length > 0) return checks;
 
-  if (provider && provider !== "nvidia" && provider !== "openai-compatible") {
-    return [result("error", "llm_provider", "LLM_PROVIDER must be nvidia or openai-compatible.")];
+  if (
+    provider &&
+    provider !== "deepseek" &&
+    provider !== "nvidia" &&
+    provider !== "openai-compatible"
+  ) {
+    return [result("error", "llm_provider", "LLM_PROVIDER must be deepseek, nvidia, or openai-compatible.")];
   }
   if (!configured) return checks;
 
@@ -92,6 +99,26 @@ function inspectLlmEnvironment(env, mode) {
     }
     if (checks.every((item) => item.level !== "error") && hasKey) {
       checks.push(result("ready", "llm", "NVIDIA LLM configuration is complete."));
+    }
+    return checks;
+  }
+
+  if (provider === "deepseek") {
+    const effectiveBaseUrl = baseUrl ?? DEEPSEEK_BASE_URL;
+    const effectiveModel = model ?? DEEPSEEK_MODEL;
+    if (effectiveBaseUrl !== DEEPSEEK_BASE_URL) {
+      checks.push(result("error", "llm_base_url", "LLM_PROVIDER=deepseek requires the official DeepSeek LLM_BASE_URL."));
+    }
+    if (effectiveModel !== DEEPSEEK_MODEL) {
+      checks.push(result("error", "llm_model", `LLM_PROVIDER=deepseek requires LLM_MODEL=${DEEPSEEK_MODEL}.`));
+    }
+    if (!hasKey) {
+      checks.push(mode === "cloud"
+        ? result("error", "llm_api_key", "Cloud mode LLM configuration is missing: LLM_API_KEY.")
+        : result("warn", "llm_api_key", "LLM_API_KEY is not configured; local LLM generation remains optional."));
+    }
+    if (checks.every((item) => item.level !== "error") && hasKey) {
+      checks.push(result("ready", "llm", "DeepSeek official LLM configuration is complete."));
     }
     return checks;
   }

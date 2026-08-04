@@ -1,4 +1,6 @@
 import {
+  DEEPSEEK_BASE_URL,
+  DEEPSEEK_MODEL,
   NVIDIA_NIM_BASE_URL,
   NVIDIA_NIM_MODEL,
   type LlmProvider
@@ -131,6 +133,8 @@ export function loadEnv(rawEnv: EnvironmentInput = process.env): AppEnv {
     rawEnv.LLM_BASE_URL?.trim() || rawEnv.LLM_API_BASE_URL?.trim() || undefined
   );
   const llmModel = rawEnv.LLM_MODEL?.trim() || undefined;
+  const inheritLegacyLlmEmbeddingConfig =
+    llmProvider === undefined || llmProvider === "openai-compatible";
   if (zoteroTransport === "web" && (!zoteroKey || !zoteroId)) {
     issues.push("ZOTERO_TRANSPORT=web requires ZOTERO_KEY and ZOTERO_ID");
   }
@@ -143,10 +147,14 @@ export function loadEnv(rawEnv: EnvironmentInput = process.env): AppEnv {
 
   const resolvedLlmBaseUrl = llmProvider === "nvidia"
     ? llmBaseUrl ?? NVIDIA_NIM_BASE_URL
-    : llmBaseUrl;
+    : llmProvider === "deepseek"
+      ? llmBaseUrl ?? DEEPSEEK_BASE_URL
+      : llmBaseUrl;
   const resolvedLlmModel = llmProvider === "nvidia"
     ? llmModel ?? NVIDIA_NIM_MODEL
-    : llmModel;
+    : llmProvider === "deepseek"
+      ? llmModel ?? DEEPSEEK_MODEL
+      : llmModel;
 
   if (llmProvider === "nvidia") {
     if (resolvedLlmBaseUrl !== NVIDIA_NIM_BASE_URL) {
@@ -154,6 +162,14 @@ export function loadEnv(rawEnv: EnvironmentInput = process.env): AppEnv {
     }
     if (resolvedLlmModel !== NVIDIA_NIM_MODEL) {
       issues.push(`LLM_PROVIDER=nvidia requires LLM_MODEL=${NVIDIA_NIM_MODEL}`);
+    }
+  }
+  if (llmProvider === "deepseek") {
+    if (resolvedLlmBaseUrl !== DEEPSEEK_BASE_URL) {
+      issues.push("LLM_PROVIDER=deepseek requires the official DeepSeek LLM_BASE_URL");
+    }
+    if (resolvedLlmModel !== DEEPSEEK_MODEL) {
+      issues.push(`LLM_PROVIDER=deepseek requires LLM_MODEL=${DEEPSEEK_MODEL}`);
     }
   }
 
@@ -178,8 +194,12 @@ export function loadEnv(rawEnv: EnvironmentInput = process.env): AppEnv {
     LLM_MAX_RETRIES: parseNonNegativeInteger(rawEnv.LLM_MAX_RETRIES, 2),
     LLM_CONCURRENCY: parsePositiveInteger(rawEnv.LLM_CONCURRENCY, 4),
     LLM_LABEL_CANDIDATE_LIMIT: parsePositiveInteger(rawEnv.LLM_LABEL_CANDIDATE_LIMIT, 300),
-    EMBEDDING_API_KEY: rawEnv.EMBEDDING_API_KEY?.trim() || rawEnv.LLM_API_KEY?.trim() || undefined,
-    EMBEDDING_API_BASE_URL: rawEnv.EMBEDDING_API_BASE_URL?.trim() || rawEnv.LLM_API_BASE_URL?.trim() || undefined,
+    EMBEDDING_API_KEY: rawEnv.EMBEDDING_API_KEY?.trim() || (
+      inheritLegacyLlmEmbeddingConfig ? rawEnv.LLM_API_KEY?.trim() : undefined
+    ) || undefined,
+    EMBEDDING_API_BASE_URL: rawEnv.EMBEDDING_API_BASE_URL?.trim() || (
+      inheritLegacyLlmEmbeddingConfig ? rawEnv.LLM_API_BASE_URL?.trim() : undefined
+    ) || undefined,
     EMBEDDING_MODEL: rawEnv.EMBEDDING_MODEL?.trim() || undefined,
     EASYSCHOLAR_API_KEY: rawEnv.EASYSCHOLAR_API_KEY,
     EASYSCHOLAR_API_URL: rawEnv.EASYSCHOLAR_API_URL,
@@ -223,8 +243,12 @@ function parseZoteroTransport(
 function parseLlmProvider(value: string | undefined, issues: string[]): LlmProvider | undefined {
   const normalized = value?.trim().toLowerCase();
   if (!normalized) return undefined;
-  if (normalized === "nvidia" || normalized === "openai-compatible") return normalized;
-  issues.push("LLM_PROVIDER must be nvidia or openai-compatible");
+  if (
+    normalized === "deepseek" ||
+    normalized === "nvidia" ||
+    normalized === "openai-compatible"
+  ) return normalized;
+  issues.push("LLM_PROVIDER must be deepseek, nvidia, or openai-compatible");
   return undefined;
 }
 

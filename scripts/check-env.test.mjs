@@ -20,6 +20,14 @@ const nvidiaCloudEnv = {
   LLM_MODEL: "deepseek-ai/deepseek-v4-flash"
 };
 
+const deepseekCloudEnv = {
+  ...validCloudEnv,
+  LLM_PROVIDER: "deepseek",
+  LLM_API_KEY: "placeholder-llm-key",
+  LLM_BASE_URL: "https://api.deepseek.com",
+  LLM_MODEL: "deepseek-v4-flash"
+};
+
 test("deployment mode defaults to local and rejects unsupported values", () => {
   assert.deepEqual(resolveDeploymentMode({}), { mode: "local" });
   assert.equal(resolveDeploymentMode({ DEPLOYMENT_MODE: "LOCAL" }).mode, "local");
@@ -70,6 +78,36 @@ test("cloud preflight accepts NVIDIA defaults but requires the runtime key name"
   assert.equal(errors.length, 1);
   assert.match(errors[0].message, /LLM_API_KEY/);
   assert.doesNotMatch(errors[0].message, /NVIDIA_API_KEY|placeholder-llm-key/);
+});
+
+test("cloud preflight accepts DeepSeek official defaults and requires the runtime key name", () => {
+  const defaults = inspectRuntimeEnvironment({
+    ...validCloudEnv,
+    LLM_PROVIDER: "deepseek",
+    LLM_API_KEY: "placeholder-llm-key"
+  });
+  assert.equal(defaults.checks.some((item) => item.level === "error"), false);
+  assert.ok(defaults.checks.some((item) => item.level === "ready" && item.code === "llm"));
+
+  const missingKey = inspectRuntimeEnvironment({
+    ...deepseekCloudEnv,
+    LLM_API_KEY: ""
+  });
+  const errors = missingKey.checks.filter((item) => item.level === "error" && item.code === "llm_api_key");
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /LLM_API_KEY/);
+  assert.doesNotMatch(errors[0].message, /DEEPSEEK_API_KEY|placeholder-llm-key/);
+});
+
+test("cloud preflight rejects DeepSeek provider endpoint/model overrides", () => {
+  const report = inspectRuntimeEnvironment({
+    ...deepseekCloudEnv,
+    LLM_BASE_URL: "https://example.invalid/v1",
+    LLM_MODEL: "deepseek-ai/deepseek-v4-flash"
+  });
+
+  assert.ok(report.checks.some((item) => item.level === "error" && item.code === "llm_base_url"));
+  assert.ok(report.checks.some((item) => item.level === "error" && item.code === "llm_model"));
 });
 
 test("cloud preflight preserves provider-absent legacy OpenAI-compatible configuration", () => {

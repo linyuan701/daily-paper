@@ -6,6 +6,7 @@ const workflows = await Promise.all([
   "ci.yml",
   "cloudflare-preview.yml",
   "daily.yml",
+  "deepseek-llm-smoke.yml",
   "nvidia-llm-smoke.yml",
   "profile.yml"
 ].map(async (name) => [

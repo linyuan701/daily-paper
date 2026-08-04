@@ -10,7 +10,7 @@
     "typecheck:worker": "npm run cf:typegen && tsc --noEmit -p tsconfig.worker.json",
     "test": "node --test scripts/daily-notifier.test.mjs scripts/daily-workflow.test.mjs scripts/profile-workflow.test.mjs && vitest run --pool=threads",
     "test:notification": "node --test scripts/daily-notifier.test.mjs",
-    "test:workflow": "node --test scripts/daily-workflow.test.mjs scripts/profile-workflow.test.mjs scripts/nvidia-llm-smoke.test.mjs scripts/ci-workflow-contract.test.mjs scripts/ci-migration-check.test.mjs scripts/production-audit-check.test.mjs",
+    "test:workflow": "node --test scripts/daily-workflow.test.mjs scripts/profile-workflow.test.mjs scripts/deepseek-llm-smoke.test.mjs scripts/nvidia-llm-smoke.test.mjs scripts/ci-workflow-contract.test.mjs scripts/ci-migration-check.test.mjs scripts/production-audit-check.test.mjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "check:env": "node scripts/check-env.mjs",
