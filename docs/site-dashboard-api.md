@@ -141,4 +141,12 @@ node node_modules/vitest/vitest.mjs run src/lib/http/cloudflare-access.test.ts s
 
 本地测试与 Prisma client 生成不执行数据库 migration、daily、profile refresh 或 Zotero sync；生产部署和真实身份验收由发布流程单独记录。
 
-同一候选的部署前回归：Node tests 26 项、Vitest 419 项、Cloudflare contract tests 22 项通过；5 个 PostgreSQL 文件的 15 项测试跳过，上述 3 个 SQLite 文件排除。OpenNext 构建、Wrangler dry-run 和最终 bundle secret scan 通过。Windows 共享依赖目录产生 standalone symlink 警告，但 OpenNext 最终产物和 Wrangler 完整打包检查均成功。
+同一候选的部署前回归：Node tests 26 项、Vitest 419 项、Cloudflare contract tests 22 项通过；5 个 PostgreSQL 文件的 15 项测试跳过，上述 3 个 SQLite 文件排除。OpenNext 构建、Wrangler dry-run 和最终 bundle secret scan 通过。这些检查不代替运行验收。
+
+## 发布构建约束
+
+Worker 发布目录必须使用锁文件安装自己的真实 `node_modules`，不能用指向另一个仓库的 Junction。2026-09-13 首次发布的产物虽然通过编译与 dry-run，但共享依赖让最终 bundle 引用了未被 OpenNext 修补的外部 NextServer；`getMiddlewareManifest()` 的动态 require 导致 health 和 dashboard 同时 500。发现后立即恢复旧 Worker，保留失败产物用于审计，并以独立依赖重新构建；业务源码不需要修改。
+
+部署前除上述检查外，必须确认没有 standalone 追踪复制失败，且 `.open-next/server-functions/default/handler.mjs.meta.json` 的 NextServer 输入来自本产物的 `default/node_modules` 修补副本，而非其他仓库。该副本的 `getMiddlewareManifest()` 应直接返回 `null`，最终 Worker 包不应再动态 require `middlewareManifestPath`。切流后首先验证公开 health 返回 200；失败立即恢复部署前版本，再继续排查。
+
+版本上传使用 `--keep-vars --strict`，先比较新旧 version bindings/runtime，再切换流量。若仓库配置省略了线上已存在的日志选项，应在被 Git 忽略的临时发布配置中原样保留线上设置，不关闭严格检查或覆盖其他生产配置。切流后重新比较 bindings、settings、subdomain 与 Cron。Client Secret 始终仅由 Site 服务端或本地验收进程读取，不进入发布配置或构建环境。
