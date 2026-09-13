@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ verify: vi.fn() }));
+const mocks = vi.hoisted(() => ({ verify: vi.fn(), verifySite: vi.fn() }));
 
-vi.mock("./lib/http/cloudflare-access", () => ({
-  verifyCloudflareAccess: mocks.verify
+vi.mock("./lib/http/cloudflare-access", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./lib/http/cloudflare-access")>(),
+  verifyCloudflareAccess: mocks.verify,
+  verifySiteDashboardAccess: mocks.verifySite
 }));
 
 import { middleware } from "./middleware";
@@ -20,6 +22,7 @@ describe("Cloudflare Access middleware", () => {
   beforeEach(() => {
     process.env.DEPLOYMENT_MODE = "cloud";
     mocks.verify.mockReset();
+    mocks.verifySite.mockReset();
   });
 
   it("keeps exact liveness public", async () => {

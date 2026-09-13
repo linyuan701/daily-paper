@@ -237,6 +237,20 @@ export class PrismaProfileSnapshotRepository implements ProfileSnapshotRepositor
 
     return mapSnapshotSummary(snapshot);
   }
+
+  /** Read persisted evidence without loading Zotero items or profile representations. */
+  async getSnapshotForDashboard(profileSnapshotId?: string) {
+    const snapshot = await this.db.profileSnapshot.findFirst({
+      where: profileSnapshotId ? { id: profileSnapshotId } : { status: "ACTIVE" },
+      select: {
+        id: true, status: true, builtAt: true, sourceLibraryVersion: true,
+        itemsCount: true, summaryJson: true,
+        researchTypePreferences: { select: { category: true, weight: true, itemCount: true } }
+      },
+      orderBy: [{ builtAt: "desc" }, { createdAt: "desc" }]
+    });
+    return snapshot ? { snapshot: mapSnapshotSummary(snapshot), summaryJson: snapshot.summaryJson } : null;
+  }
 }
 
 function toDbSegment(value: "recent_core" | "stable_long_term" | "background") {

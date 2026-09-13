@@ -42,10 +42,58 @@ export async function verifyCloudflareAccess(
   try {
     const payload = await verifyJwt({ token, teamDomain, audience });
     const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
-    if (!email || email !== allowedEmail) {
+    // Service-token assertions must never become personal/admin sessions.
+    if (payload.common_name !== undefined || !email || email !== allowedEmail) {
       return { ok: false, code: "ACCESS_TOKEN_INVALID" };
     }
     return { ok: true, email };
+  } catch {
+    return { ok: false, code: "ACCESS_TOKEN_INVALID" };
+  }
+}
+
+export const SITE_DASHBOARD_PATH = "/api/site/dashboard";
+
+export function isSiteDashboardRead(request: Request): boolean {
+  return request.method === "GET" && new URL(request.url).pathname === SITE_DASHBOARD_PATH;
+}
+
+/** A separate, exact-route grant. It is never used to authorize other APIs. */
+export async function verifySiteDashboardAccess(
+  request: Request,
+  environment: AccessEnvironment = process.env,
+  verifyJwt: JwtVerifier = verifyWithRemoteJwks
+): Promise<{ ok: true } | Extract<AccessVerification, { ok: false }>> {
+  if (!isSiteDashboardRead(request)) return { ok: false, code: "ACCESS_TOKEN_INVALID" };
+
+  // This new endpoint always authenticates, including in Local Mode.
+  const ownerEnvironment = { ...environment, ACCESS_JWT_LOCAL_PREVIEW_BYPASS: "false" };
+  const owner = await verifyCloudflareAccess(request, ownerEnvironment, verifyJwt);
+  if (owner.ok) return { ok: true };
+
+  const teamDomain = normalizeTeamDomain(environment.TEAM_DOMAIN);
+  const audience = environment.SITE_READ_POLICY_AUD?.trim();
+  const clientId = environment.SITE_READ_ACCESS_CLIENT_ID?.trim();
+  if (!teamDomain || !audience || !clientId) return owner;
+  const token = request.headers.get("cf-access-jwt-assertion")?.trim();
+  if (!token) return { ok: false, code: "ACCESS_TOKEN_REQUIRED" };
+
+  try {
+    const payload = await verifyJwt({ token, teamDomain, audience });
+    if (payload.type !== "app" || typeof payload.exp !== "number" || payload.exp <= Date.now() / 1000) {
+      return { ok: false, code: "ACCESS_TOKEN_INVALID" };
+    }
+    // A path-specific Access application also issues its audience to the owner.
+    // Accept that personal session only here; other routes still require POLICY_AUD.
+    const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
+    if (payload.common_name === undefined && email && email === environment.ACCESS_ALLOWED_EMAIL?.trim().toLowerCase()) {
+      return { ok: true };
+    }
+    if (payload.common_name !== clientId ||
+        (payload.email !== undefined && payload.email !== "")) {
+      return { ok: false, code: "ACCESS_TOKEN_INVALID" };
+    }
+    return { ok: true };
   } catch {
     return { ok: false, code: "ACCESS_TOKEN_INVALID" };
   }
