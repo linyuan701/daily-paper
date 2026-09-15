@@ -49,6 +49,15 @@ const cloudflareDailyScheduler = readFileSync(
   "utf8"
 );
 
+test("cloud daily exposes source request bounds with existing production defaults", () => {
+  for (const [name, fallback] of Object.entries({
+    ARXIV_MAX_PAGES: "3", ARXIV_RETRY_BACKOFF_MS: "15000",
+    ARXIV_RETRY_AFTER_CAP_MS: "120000", SOURCE_HTTP_TIMEOUT_MS: "20000"
+  })) {
+    assert.ok(workflow.includes(name + ": ${{ vars." + name + " || '" + fallback + "' }}"));
+  }
+});
+
 test("cloud daily workflow exposes the approved schedule and manual runDate", () => {
   assert.match(workflow, /schedule:\s*\n\s*- cron: ["']15 8 \* \* \*["']\s*\n\s*timezone: ["']Asia\/Shanghai["']/);
   assert.match(workflow, /workflow_dispatch:\s*\n\s*inputs:\s*\n\s*runDate:/);

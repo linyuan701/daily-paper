@@ -3,6 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as sourceHttp from "./http";
 import { ARXIV_USER_AGENT, ArxivSourceAdapter } from "./arxiv-adapter";
 
+// Queue timing and cross-instance serialization are exercised separately with fake clocks.
+vi.mock("./arxiv-request-scheduler", () => ({
+  scheduleArxivRequest: (request: () => Promise<unknown>) => request()
+}));
+vi.mock("../../lib/logging", () => ({ logger: { info: vi.fn(), warn: vi.fn() } }));
+
 describe("ArxivSourceAdapter", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -133,9 +139,9 @@ describe("ArxivSourceAdapter", () => {
   });
 
   it("explicitly enables Retry-After handling for arXiv requests", async () => {
-    const fetchWithRetry = vi.spyOn(sourceHttp, "fetchWithRetry").mockResolvedValue(
-      new Response(wrapFeed(buildEntries(1, 4000)), { status: 200 })
-    );
+    const fetchWithRetry = vi.spyOn(sourceHttp, "fetchTextWithRetry").mockResolvedValue({
+      response: new Response(null, { status: 200 }), text: wrapFeed(buildEntries(1, 4000))
+    });
     const adapter = new ArxivSourceAdapter({
       categoryScopes: ["q-bio.GN"],
       timeoutMs: 1_234,
@@ -232,7 +238,43 @@ describe("ArxivSourceAdapter", () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("retries the failed page without discarding earlier pages when recovery succeeds", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(wrapFeed(buildEntries(100, 1000))))
+      .mockRejectedValueOnce(Object.assign(new Error("fixture timeout"), { name: "AbortError" }))
+      .mockResolvedValueOnce(new Response(wrapFeed(buildEntries(1, 2000))));
+    vi.stubGlobal("fetch", fetchMock);
+    const records = await new ArxivSourceAdapter({ categoryScopes: ["q-bio.GN"], retryBackoffMs: 0 })
+      .fetchCandidatesForDay(testWindow());
+    expect(records).toHaveLength(101);
+    expect(fetchMock.mock.calls.map(([url]) => new URL(url).searchParams.get("start")))
+      .toEqual(["0", "100", "100"]);
+  });
+
+  it("reports the exact failed page and attempts without treating incomplete data as success", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(wrapFeed(buildEntries(100, 1000))))
+      .mockRejectedValue(Object.assign(new Error("private upstream message"), { name: "AbortError" })));
+    await expect(new ArxivSourceAdapter({ categoryScopes: ["q-bio.GN"], retryBackoffMs: 0 })
+      .fetchCandidatesForDay(testWindow())).rejects.toMatchObject({
+        code: "ARXIV_API_ERROR", message: "arXiv request failed",
+        details: {
+          categoryIndex: 1, page: 2, start: 100, attempts: 3,
+          requestPhase: "headers", failureCategory: "timeout", timeoutMs: 12000,
+          elapsedMs: expect.any(Number), attemptElapsedMs: expect.any(Number)
+        }
+      });
+  });
 });
+
+function testWindow() {
+  return {
+    runDate: new Date("2026-03-07T00:00:00Z"),
+    dayStart: new Date("2026-03-07T00:00:00Z"),
+    dayEnd: new Date("2026-03-07T23:59:59.999Z")
+  };
+}
 
 function buildEntries(count: number, seed: number): string {
   const entries: string[] = [];
