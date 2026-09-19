@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import { isSiteApiRequest } from "./site-api-scope";
 
 export type AccessEnvironment = Record<string, string | undefined>;
 
@@ -40,9 +41,32 @@ export async function verifyCloudflareAccess(
   }
 
   try {
+    // A service assertion is accepted only on the frozen Site API scope, and only
+    // after signature, issuer, separate audience and exact principal verification.
+    const siteAudience = environment.SITE_API_POLICY_AUD?.trim();
+    const siteClient = environment.SITE_API_ACCESS_CLIENT_ID?.trim();
+    if (siteAudience && siteClient && isSiteApiRequest(request)) {
+      try {
+        const service = await verifyJwt({ token, teamDomain, audience: siteAudience });
+        if (service.type === "app" && service.common_name === siteClient &&
+            (service.email === undefined || service.email === "") &&
+            typeof service.exp === "number" && service.exp > Date.now() / 1000) {
+          return { ok: true, email: "site-service" };
+        }
+        // A path-specific Access application must retain its owner policy too.
+        // This audience never authorizes personal sessions outside the Site scope.
+        if (service.type === "app" && service.common_name === undefined &&
+            typeof service.email === "string" && service.email.trim().toLowerCase() === allowedEmail &&
+            typeof service.exp === "number" && service.exp > Date.now() / 1000) {
+          return { ok: true, email: allowedEmail };
+        }
+      } catch {
+        // The existing personal-session audience remains independently valid.
+      }
+    }
     const payload = await verifyJwt({ token, teamDomain, audience });
     const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
-    if (!email || email !== allowedEmail) {
+    if (payload.common_name !== undefined || !email || email !== allowedEmail) {
       return { ok: false, code: "ACCESS_TOKEN_INVALID" };
     }
     return { ok: true, email };

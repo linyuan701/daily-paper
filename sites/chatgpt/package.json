@@ -1,0 +1,11 @@
+{
+  "name": "daily-paper-chatgpt-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check src/worker.mjs && node --check src/proxy.mjs && node --check public/app.js"
+  },
+  "engines": { "node": ">=22" }
+}

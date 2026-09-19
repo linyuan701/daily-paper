@@ -9,6 +9,7 @@ export default defineConfig({
     exclude: [
       ...configDefaults.exclude,
       "scripts/**",
+      "sites/**",
       ".build-home/**"
     ]
   }
