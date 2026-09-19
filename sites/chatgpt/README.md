@@ -71,6 +71,9 @@ scheduler, notification or ingestion changes are included.
 
 Sites server configuration (never `NEXT_PUBLIC_*`, HTML, JS or hosting manifest):
 
+`runtime-env.example` documents the server configuration names using placeholders.
+Configure actual values through Sites; do not commit a filled-in copy.
+
 | Name | Treatment |
 |---|---|
 | DAILY_PAPER_API_ORIGIN | Fixed HTTPS Worker origin; no path/query/userinfo |

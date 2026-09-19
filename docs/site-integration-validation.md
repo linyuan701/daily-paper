@@ -32,6 +32,11 @@ The first root test invocation found the Site's Node test files through Vitest
 and failed with two empty-suite errors. Vitest now excludes `sites/**`; Site tests
 run through `test:site` and their own CI. The corrected root test gate passed.
 
+The initial GitHub CI rejected the nested `.env.example` filename under its
+existing tracked-file guard. The placeholder-only template was renamed to
+`runtime-env.example`; the security guard was not weakened. Site tests, secret
+scanning, and the Linux workerd build/smoke check passed on the initial revision.
+
 ## Not established
 
 - A real Site preview/new private publication. No version was saved or deployed.
