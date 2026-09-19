@@ -15,56 +15,36 @@ Owner browser -> Cloudflare Access -> OpenNext Worker
                                   read + interactive writes
 ```
 
-The Worker uses `@prisma/adapter-neon` with the generated client's explicit `@prisma/client/wasm.js` entrypoint from `prisma/postgresql/schema.prisma`. Selecting the WASM entrypoint explicitly prevents a Windows-built deployment from falling back to Prisma's native query engine when Wrangler bundles on Windows. The standard PostgreSQL Client and migration history used by GitHub Actions are unchanged. The SQLite Client remains the Local Mode implementation.
+The Worker uses `@prisma/adapter-neon` with the generated client's explicit `@prisma/client/wasm.js` entrypoint from `prisma/postgresql/schema.prisma`. The artifact contract rejects native query engines and filesystem-backed compiler references in the Worker bundle. The Node PostgreSQL client and migration history used by Actions remain separate from the Worker entrypoint. SQLite code is retained legacy material; Local Mode support is retired under DPO-011.
 
-## Build and local preview
+## Build and preview on GitHub
 
-Use Node 22 and install from the lockfile:
+Use **Cloudflare Worker preview contract** (`.github/workflows/cloudflare-preview.yml`), which runs for pull requests and supports manual dispatch. It uses GitHub-hosted Ubuntu and Node 22, installs the lockfile, builds OpenNext, checks the generated/final bundle, scans for secrets, and runs workerd HTTP smoke tests without production credentials.
 
-```text
-npm ci
-npm run cf:typegen
-npm run cf:build
-npm run test:cloudflare
-npm run cf:preview
-```
+The runner's temporary workerd process and loopback HTTP address are CI fixtures, not a server on the user's computer. Windows setup, native workerd troubleshooting, local `.dev.vars`, and a local Wrangler installation are not supported operations prerequisites.
 
-For a database-backed preview, create an ignored `.dev.vars` file containing a disposable Neon URL:
+### Release automation gap
 
-```dotenv
-DATABASE_URL=postgresql://USER:PASSWORD@HOST/DATABASE?sslmode=require
-```
+The integrated preview workflow **does not deploy or roll back a production Worker**. A GitHub-operated release/rollback workflow remains planned in `ROADMAP.md`. Configuration and acceptance requirements below describe that deployment boundary; they are not evidence that a production release workflow or a credentialed acceptance run exists.
 
-Do not use a production database for destructive tests. `cf:preview` remains active until stopped. Validate liveness, private routes, recommendation reads, and guarded writes. OpenNext warns that native Windows support is incomplete; if `workerd` crashes on Windows, repeat preview acceptance on Linux or a GitHub-hosted Ubuntu runner and record the real result.
+Database-backed acceptance must use a disposable PostgreSQL database in an explicitly configured cloud test environment. Verify recommendations, feedback persistence, liveness, readiness success/failure, and sequential requests there. Never replace the absent release workflow with a dependency on the user's local machine.
 
-### Current acceptance status
+### Historical acceptance evidence
 
-The repository build and static Worker contract checks pass on the current Windows development machine. Native `cf:preview` is not accepted on Windows: `workerd` exited with access-violation status `0xc0000005` under the installed Node runtime, while a Node 22 retry did not start a listener and had to be stopped after the wrapper stalled. Linux runtime acceptance passed in GitHub Actions run `30249599589`: OpenNext built on `ubuntu-latest`, workerd started, the dashboard rendered, liveness returned 200, readiness failed safely without a database binding, Cloud-disabled job routes returned the capability contract, and mutation guards rejected non-JSON, wrong-origin, and oversized requests.
+GitHub Actions run `30249599589` built OpenNext on `ubuntu-latest`, started workerd, rendered the dashboard, returned liveness 200, failed readiness safely without a database binding, and checked capability and mutation guards. Historical Windows preview failures are no longer a supported-runtime acceptance gap.
 
-No `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, or disposable Neon test URL was available, so no remote Worker deploy, Access policy, readiness query, or persisted feedback write was executed. Perform the remaining acceptance from Linux or a GitHub-hosted Ubuntu runner with a disposable PostgreSQL database:
-
-```text
-npm ci
-npm run cf:typegen
-npm run test:cloudflare
-npm run cf:build
-npm run cf:preview
-```
-
-Then verify `/api/health/live`, Access-protected `/api/health/ready`, recommendation reads, a feedback write, a second sequential request, and rollback before approving production deployment.
-
-The repository also includes `.github/workflows/cloudflare-preview.yml`. It builds the OpenNext artifact on `ubuntu-latest`, launches local workerd, and verifies liveness, sanitized readiness failure, Cloud-disabled job routes, wrong-origin rejection, JSON-only writes, and the request-size limit without loading production Secrets. This resolves the native Windows `workerd` gap; database-backed production acceptance remains separate.
+That checkpoint did not verify a remote deployment, Access policy, database-backed readiness, or persisted feedback. Current deployment evidence is maintained in `PROJECT_STATE.md`; successful preview CI alone cannot supply it.
 
 ## Cloudflare configuration
 
 1. Create a Worker deployment using this repository and `wrangler.jsonc`.
-2. Add the pooled Neon runtime URL with `npx wrangler secret put DATABASE_URL`.
+2. Configure the pooled Neon runtime URL as the Worker secret `DATABASE_URL` in the cloud service. Keep release credentials in the reviewed GitHub/Cloudflare secret stores, not a local file.
 3. Deploy the Worker named `daily-paper`. With `workers_dev=true`, its first-release URL is `https://daily-paper.<account-subdomain>.workers.dev`. `preview_urls=false` remains explicit so no per-version preview hostname becomes a bypass.
 4. In Workers & Pages, select `daily-paper`, open **Settings > Domains & Routes**, and click **Enable Cloudflare Access** for the production `workers.dev` route.
 5. In the generated Access policy, allow only the intended owner email. Configure the actual address in Cloudflare, never in source. Do not add `Everyone`, arbitrary valid email, or a public-domain allow rule to the protected application.
 6. Copy the Access application audience tag and configure Worker variables `POLICY_AUD`, `TEAM_DOMAIN` (`https://<team-name>.cloudflareaccess.com`), and `ACCESS_ALLOWED_EMAIL`. The address is deployment data and must not be committed.
 7. Keep the dashboard, APIs, and `/api/health/ready` protected. Configure a separate exact public destination/exception only for `/api/health/live` when public liveness is required.
-8. Deploy with `npm run cf:deploy`, then verify both the outer Access policy and the Worker's application-level JWT validation.
+8. Once the GitHub release workflow is implemented and authorized, build/deploy there using the repository's `cf:deploy` command, then verify the outer Access policy and the Worker's application-level JWT validation. This step is currently a workflow gap, not an instruction to deploy from a user PC.
 
 Cloudflare's one-click Workers Access feature is supported directly on production `workers.dev` routes. The application does not rely on that outer route alone: middleware validates `Cf-Access-Jwt-Assertion` against the account JWKS, expected issuer, application audience, and configured owner email. Missing Access variables, a missing/invalid token, or an unexpected email fails closed with a sanitized 403.
 
@@ -89,7 +69,7 @@ The daily workflow does not call the Worker, so PR 4 adds no Cloudflare service 
 | `GET /api/health/ready` and legacy `GET /api/health` | Database readiness; protected and sanitized. |
 | daily/MVP/monthly job endpoints | Cloud-disabled; use GitHub Actions. |
 | ingestion, enrichment, normalization, recall, rerank, summary generation, profile build, Zotero sync/tag mutation methods | Cloud-disabled Node job responsibilities. |
-| Obsidian export, journal bootstrap/health probing, profile reminder mutation | Local/Node-only and Cloud-disabled. |
+| Obsidian export, journal bootstrap/health probing, profile reminder mutation | Cloud-disabled. Historical local endpoints are not supported fallback operations. |
 
 No route emits permissive CORS headers. Cloud writes require JSON, a matching `Origin`, same-origin Fetch Metadata when present, bounded bodies, and route validation. Server errors do not return stack traces, connection URLs, provider bodies, or secrets.
 
@@ -97,7 +77,7 @@ No route emits permissive CORS headers. Cloud writes require JSON, a matching `O
 
 The Worker requires the `DATABASE_URL` secret plus non-secret Access values `POLICY_AUD` and `TEAM_DOMAIN`; `ACCESS_ALLOWED_EMAIL` should be treated as private deployment configuration. It does not receive Zotero, LLM, SMTP, WeCom, Obsidian, Windows, or daily-job secrets.
 
-Before deploy, run the full repository checks plus `cf:build`, `cf:preview`, and `test:cloudflare`. A real preview with a disposable PostgreSQL database must exercise recommendations, feedback persistence, liveness, readiness success/failure, and sequential requests. Without credentials, record these as not executed rather than passed.
+Before deployment, the GitHub release path must pass repository CI and Worker build/preview checks. A preview with a disposable PostgreSQL database must exercise recommendations, feedback persistence, liveness, readiness success/failure, and sequential requests. Without the workflow or credentials, record these as not executed rather than passed.
 
 Rollback the Worker to the last verified Cloudflare version or disable its production `workers.dev` route while retaining Access deny rules. Worker rollback does not reverse PostgreSQL migrations.
 

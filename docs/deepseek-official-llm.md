@@ -37,7 +37,7 @@ The **DeepSeek official LLM smoke test** workflow is manual-only. It sends one s
 3. Select the reviewed branch and explicitly dispatch it.
 4. Confirm `httpClassification` is `success` and `jsonValid` is `true`.
 
-For an equivalent local check, inject `DEEPSEEK_API_KEY` into the current process and run `node scripts/deepseek-llm-smoke.mjs`. Do not put a real key in `.env.example` or shell history. Do not use the daily workflow as a provider smoke test.
+Run this check through the manual GitHub smoke-test workflow. The former local credential-injection procedure is retired under DPO-011; no local Node installation or secret file is required. Do not use the daily workflow as a provider smoke test.
 
 ## Retry and rollback
 

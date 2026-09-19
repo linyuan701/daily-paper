@@ -131,3 +131,16 @@ This append-style log records accepted governance and architecture decisions. It
 - **Evidence:** Approved Agent Operating Model v1.
 - **Supersedes:** Multiple independent status ledgers.
 - **Superseded by:** None.
+
+## DPO-011 — Cloud-only operation and Local Mode retirement
+
+- **Decision ID:** DPO-011
+- **Date:** 2026-09-19
+- **Status:** Accepted user direction; formal architecture freeze delivered through [PR #44](https://github.com/linyuan701/daily-paper/pull/44), whose merge record is the integration evidence.
+- **Context:** Local installation, SQLite, Windows scheduling, and Obsidian proposals remained mixed into current documentation despite the GitHub/cloud production path. The user explicitly confirmed that the whole supported flow should use GitHub execution and network dependencies, with local-dependent flows treated as abandoned plans.
+- **Decision:** Use GitHub-hosted Actions for background jobs, network integrations, and CI. Retain Cloudflare Workers/Access for online dashboard and short APIs and PostgreSQL/Neon for persistence. Retire user-PC/local runtime support, Windows installation/migration/scheduling, SQLite production storage/parity, Zotero Local API, desktop notifications, and Obsidian filesystem workflows. No self-hosted runner or local fallback is a supported production dependency.
+- **Rationale:** The service must keep operating without the owner's computer, local files, or installed desktop applications. Runtime and provider failures should be diagnosed from cloud evidence.
+- **Consequences:** README and agent/reviewer scope now point to the cloud path. Local code, applied migration history, and disposable CI fixtures may remain until reviewed cleanup; their presence does not imply support. No user data, existing local tasks, installed software, or production state is deleted or modified by this decision. The integrated Worker workflow only builds/previews. PR #45's Site and PR #47's release/rollback implementations remain unmerged as of 2026-09-20 and are not deployed or integrated by this architecture freeze. The decision does not automatically close the arXiv issue.
+- **Evidence:** User direction in this task on 2026-09-19; `origin/master@d8552a0468a5970ee530195726f6c96e04b286b3`; `.github/workflows/daily.yml`, `.github/workflows/profile.yml`, `.github/workflows/cloudflare-preview.yml`, `wrangler.jsonc`; production daily run [#35421549513](https://github.com/linyuan701/daily-paper/actions/runs/35421549513).
+- **Supersedes:** Local Mode support/default/recovery recommendations in the old README and Cloud Mode A design/migration documents, and the former continuing SQLite/PostgreSQL product-parity requirement. DPO-002's archive protection and DPO-003's integration/production distinction still apply; support retirement does not create a new lifecycle value.
+- **Superseded by:** None.

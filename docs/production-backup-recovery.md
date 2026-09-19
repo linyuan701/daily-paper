@@ -2,6 +2,8 @@
 
 This runbook covers the single-user Cloud Mode deployment: GitHub Actions runs the daily and profile jobs, Cloudflare Workers serves the Access-protected dashboard and interactive APIs, and Neon PostgreSQL is the cloud source of truth. Local SQLite and a real Obsidian vault are outside this procedure.
 
+> **Execution-scope correction (2026-09-19, DPO-011):** The recovery invariants below remain relevant, but workstation PowerShell prompts, local export/evidence directories, and locally installed database tools are retired execution instructions. Use cloud service consoles for supported provider operations. A GitHub-hosted export/restore workflow with reviewed secret handling, private encrypted storage, retention, and recovery verification is still missing; the command examples below are design/reference material until adapted and reviewed. Do not claim they can be pasted into Actions unchanged, use public Actions artifacts for user data, or require the owner's PC as the backup/recovery host. This decision authorizes no live recovery or data deletion.
+
 Use this runbook for a planned production migration, credential compromise, application rollback, or database recovery drill. Keep all evidence outside the repository on an encrypted volume. Evidence can contain account, branch, endpoint, role, host, and research-data metadata even when it contains no password.
 
 ## Safety rules

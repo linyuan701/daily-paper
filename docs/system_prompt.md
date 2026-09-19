@@ -2,6 +2,8 @@
 
 > **Classification: historical design prompt.** It is retained as provenance, not current project state or architecture. See `docs/PROJECT_STATE.md` and `docs/ARCHITECTURE.md`.
 
+> **Scope correction (2026-09-19):** Local runtime and SQLite production proposals are abandoned under DPO-011. Do not revive them from this prompt; use GitHub-hosted jobs and the cloud services described in [current architecture](ARCHITECTURE.md).
+
 You are a senior full-stack engineer and AI product architect.
 
 Help design an MVP for a daily literature triage web app centered on a Zotero library.

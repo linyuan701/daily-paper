@@ -2,6 +2,8 @@
 
 > **Classification: historical implementation prompt.** It is retained as provenance and must not override current integrated code, `AGENTS.md`, or the four canonical documents.
 
+> **Scope correction (2026-09-19):** Local runtime and SQLite production proposals are abandoned under DPO-011. Do not revive them from this prompt; use GitHub-hosted jobs and the cloud services described in [current architecture](ARCHITECTURE.md).
+
 You are a senior full-stack engineer working from an approved system design.
 
 Now implement the MVP for the daily literature triage web app described in PROJECT.md, AGENT_RULES.md, docs/system_prompt.md, and docs/mvp_architecture_freeze.md.

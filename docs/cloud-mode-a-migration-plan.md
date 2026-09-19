@@ -2,6 +2,8 @@
 
 > **Classification: historical migration plan.** It does not maintain current integration or production status. See `docs/PROJECT_STATE.md`; use the focused operational runbooks for current procedures.
 
+> **Local portions retired (2026-09-19):** DPO-011 cancels this plan's ongoing Windows/Local Mode support, SQLite import roadmap, local installer work, Obsidian filesystem scope, and rollback through Local scheduling. These passages are abandoned proposals, not current instructions. Preserve user data and applied migrations; use the [cloud architecture](ARCHITECTURE.md) and [cloud recovery runbook](production-backup-recovery.md) for supported operations.
+
 Implementation update (2026-07-27): PR 4 is merged. The first release uses an Access-protected production `workers.dev` route with preview URLs disabled; production account deployment and credentialed Neon/Cloudflare acceptance remain pending. Obsidian plugin work has not started.
 
 Status: PR 1–PR 4 are approved, implemented, and merged. Production account deployment and credentialed acceptance remain in progress.

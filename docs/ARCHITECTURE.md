@@ -1,6 +1,6 @@
 # Daily Paper integrated architecture
 
-This document describes only the implementation present at `origin/master@4b137ec96fdcd9e63574d497efbf64707c8a2a65`. Historical designs and experimental workspaces are not architecture evidence. If this document conflicts with a later verified `origin/master`, the code wins and Statekeeper must reconcile the document.
+Implementation baseline verified before the architecture freeze: `origin/master@c2551aacbcb5f6b878d77103192ffd641a29ecf1`, checked 2026-09-20. PR #44 formalizes the cloud-only support decision DPO-011 separately from code presence: legacy local code remains integrated but is no longer a supported runtime. Historical designs and experimental workspaces are not architecture evidence. Later integrated implementation must be reconciled explicitly.
 
 ## System topology
 
@@ -19,6 +19,14 @@ source retrieval → enrichment → normalize/dedup → labels → profile refre
 ```
 
 The profile and daily pipelines remain separate services. The daily pipeline now performs a scheduled profile refresh immediately before recall so prior feedback and current Zotero state are bound to the recall snapshot.
+
+### Cloud execution boundary
+
+GitHub-hosted Actions runners execute the background pipelines and network calls to paper sources, Zotero Web API, LLM/enrichment providers, notification providers, and PostgreSQL. Cloudflare Workers provides the authenticated dashboard and short APIs against the same network database. A browser is the user's interaction surface; no user-PC application, database, local API, or always-on scheduler supports this runtime.
+
+`daily.yml` and `profile.yml` explicitly select cloud mode, Zotero Web transport, and disabled Obsidian/desktop capabilities. Cloud configuration rejects incompatible local capabilities. Source/provider failure is surfaced through existing failure and partial-result contracts, not repaired by falling back to a local service.
+
+Zotero sync is a separate manual profile-workflow operation. The daily pre-recall refresh consumes the already-persisted Zotero library and feedback, not a fresh Zotero sync.
 
 ## Source retrieval and candidate freshness
 
@@ -91,14 +99,16 @@ The business request key is derived from sorted sources and UTC business date. A
 
 ## Persistence boundaries
 
-Local and Cloud modes have independent Prisma roots:
+PostgreSQL is the supported production store. Source still contains two independent Prisma roots:
 
 | Mode | Schema | Migration history | Runtime |
 |---|---|---|---|
-| Local | `prisma/schema.prisma` | `prisma/migrations/**` | SQLite and local generated client |
-| Cloud | `prisma/postgresql/schema.prisma` | `prisma/postgresql/migrations/**` | PostgreSQL/Neon and cloud/Worker clients |
+| Retired Local Mode | `prisma/schema.prisma` | `prisma/migrations/**` | Legacy SQLite client and existing test dependencies; no production support |
+| Supported cloud runtime | `prisma/postgresql/schema.prisma` | `prisma/postgresql/migrations/**` | PostgreSQL/Neon and Node/Worker clients |
 
 Changing only `DATABASE_URL` does not switch schema providers. Applied migrations are append-only operational history; production uses `prisma migrate deploy`, never `migrate dev`.
+
+Existing schema-parity tests are a code dependency until a reviewed cleanup replaces them. They are not an ongoing requirement to deliver Local Mode features. Do not delete or rewrite migration history as part of retiring local support.
 
 ## Scheduling and production execution
 
@@ -107,6 +117,28 @@ Changing only `DATABASE_URL` does not switch schema providers. Applied migration
 `wrangler.jsonc` configures a Cloudflare Cron. `custom-worker.ts::scheduled` calls `src/cloudflare/daily-scheduler.ts::handleDailySchedule`, which dispatches the same GitHub workflow at `master` with an explicit business date, a bounded timeout, sanitized logging, and no Cloudflare automatic retry. The GitHub native schedule is the second clock into the same persisted execution path.
 
 The repository proves both paths are integrated. Actual Cloudflare deployment and successful dispatch require external runtime evidence and are currently `UNKNOWN` in `docs/PROJECT_STATE.md`.
+
+CI and `cloudflare-preview.yml` run on GitHub-hosted Ubuntu. The preview workflow builds, scans, and starts disposable workerd for HTTP smoke tests; it never deploys production. A GitHub-operated Worker release/rollback workflow is still absent from the integrated baseline. PR #47 proposes that implementation; PR #45 proposes a Site frontend and scoped API adapter. Both are unmerged as of 2026-09-20. Neither is part of this integrated architecture or proven deployed by the support decision.
+
+Cloud backup/recovery invariants remain relevant, but the old workstation export/restore commands do not satisfy this execution boundary. GitHub-hosted recovery automation and its private storage/credential contract remain planned; provider-console operations and production mutations still require their normal authorization and verification.
+
+## Retired local components
+
+DPO-011 retires these responsibilities as of 2026-09-19:
+
+| Legacy surface | Disposition / supported replacement |
+|---|---|
+| Local Next.js server and `localhost` job/MVP endpoints | Abandoned product runtime; Worker short APIs and Actions jobs |
+| SQLite production database and Windows-to-Windows data migration | Retained historical code/data, no support or parity promise; PostgreSQL is the cloud store |
+| Zotero Desktop / Local API / automatic local fallback | Abandoned integration path; GitHub jobs use Zotero Web API |
+| Windows setup/doctor, Task Scheduler, scheduler loop, local job wrappers | Abandoned operations path; GitHub workflows and persisted job guards |
+| Windows Toast / desktop notifications | Abandoned notification path; job-side network notification providers |
+| Obsidian vault export, filesystem sync, local feedback experiments | Abandoned product proposals; cloud dashboard feedback remains supported |
+| Local backups/import proposals and Windows-specific build/preview workarounds | Historical reference; cloud recovery and GitHub CI are the support targets |
+
+The code still accepts local deployment settings and defaults to local when `DEPLOYMENT_MODE` is absent. Supported cloud entry points set it explicitly. A future cleanup must inventory shared imports, Prisma generation, and test dependencies before removing local code; this documentation change does not remove those branches or alter defaults.
+
+Retirement does not delete databases, libraries, vault files, backups, credentials, scheduled tasks, or the read-only `codex/cloud-mode-a` archive. Disposable runner test databases, loopback HTTP servers, and temporary build artifacts remain legitimate cloud CI implementation details. Cloud failure recovery uses persisted retry/restore/rollback procedures, never Local Mode scheduling.
 
 ## Notification and dashboard
 
@@ -124,6 +156,7 @@ The Next.js dashboard reads the latest persisted feed. In Cloud Mode, OpenNext r
 - Source freshness is explicit and source-specific.
 - Recall and rerank are separate, persisted, explainable stages.
 - User-corrected content is not silently overwritten.
-- SQLite and PostgreSQL schemas/migrations remain independent and must be checked for intended parity.
+- PostgreSQL migrations remain safe and append-only. Retained SQLite history and user data are not modified to enforce the cloud-only support policy.
+- Production jobs require GitHub-hosted execution and network providers; no user-PC dependency or Local Mode fallback is supported.
 - The Worker does not run migrations or the long daily pipeline.
 - Production and user-data mutations require explicit authorization.

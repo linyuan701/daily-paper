@@ -20,6 +20,19 @@ Canonical project documentation:
 
 Historical prompts, plans, audits, and runbooks are evidence or operational references, not independent current-state ledgers.
 
+## Supported runtime: cloud only
+
+The user decision of 2026-09-19 (DPO-011 in `docs/DECISIONS.md`) retires Local Mode as a product and operations target. This changes the support contract; it does not claim that legacy code has already been removed.
+
+- GitHub-hosted Actions runners execute source retrieval, Zotero Web sync, profile maintenance, LLM work, daily ranking, notifications, and CI. Do not introduce a self-hosted/user-PC runner dependency.
+- Cloudflare Workers serves the authenticated dashboard and short APIs; PostgreSQL/Neon stores persistent data. These are external cloud services, not processes hosted by GitHub. A Worker may dispatch the GitHub job but must not execute the long pipeline.
+- Windows installation/migration, local Next.js hosting, SQLite production storage, Zotero Desktop/Local API, desktop notifications, local schedulers, and Obsidian filesystem integration are abandoned proposals or legacy code. Do not maintain, revive, or use them as a production fallback unless the user explicitly changes this decision.
+- Preserve user data and applied migration history. Retirement does not authorize deleting files/databases, uninstalling software, altering live scheduled tasks, importing local data, or changing production.
+- Use explicit cloud configuration and network providers. Provider failures must remain visible; never compensate with a local application, local file, or localhost integration.
+- Runner-local disposable test fixtures and build artifacts are CI implementation details, not Local Mode support. Retain existing regression gates until a separately reviewed cleanup removes their dependencies. SQLite parity is not a continuing product feature requirement.
+
+The integrated Worker workflow builds and previews on GitHub; it does not deploy production. PR #45's Site implementation and PR #47's release/rollback implementation are separate, unmerged work as of 2026-09-20. Do not describe either as integrated or deployed based on this architecture decision. See the canonical architecture and roadmap before describing an end-to-end cloud release as complete.
+
 ## Task startup and workspace trust
 
 The Primary / Coordinator starts every engineering task with this sequence:
@@ -69,7 +82,7 @@ The Primary is defined here and does not need to be spawned as a custom agent.
 
 ### Integration Reviewer
 
-`integration_reviewer` is an independent, read-only integration gate. It checks frozen-contract compliance, regression risk, missing tests, migration/schema safety, SQLite/PostgreSQL parity, ranking/profile/feedback semantics, production-path regressions, and final integration readiness. It never implements fixes, changes the reviewed diff, redefines contracts, makes product decisions, merges pull requests, or mutates production/user state.
+`integration_reviewer` is an independent, read-only integration gate. It checks frozen-contract compliance, regression risk, missing tests, PostgreSQL migration/schema safety, ranking/profile/feedback semantics, cloud production-path regressions, and final integration readiness. Existing SQLite fixtures may still need regression checks, but Local Mode feature parity is no longer a product requirement. It never implements fixes, changes the reviewed diff, redefines contracts, makes product decisions, merges pull requests, or mutates production/user state.
 
 ### Statekeeper / Historian
 

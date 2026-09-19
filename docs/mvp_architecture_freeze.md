@@ -2,6 +2,8 @@
 
 > **Classification: historical architecture baseline.** Its original source-of-truth claim is superseded. Current integrated architecture is documented in `docs/ARCHITECTURE.md`, with current state in `docs/PROJECT_STATE.md`.
 
+> **Scope correction (2026-09-19):** DPO-011 retires Local Mode and SQLite production support. The provider-switching and local-runtime proposals below are historical, not current setup or acceptance requirements. See [current architecture](ARCHITECTURE.md).
+
 This document freezes the MVP architecture, data model, and module boundaries for the daily literature triage app.
 It is the source of truth for implementation issues that follow.
 
