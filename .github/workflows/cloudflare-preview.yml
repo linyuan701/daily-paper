@@ -3,6 +3,12 @@ name: Cloudflare Worker preview contract
 on:
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Immutable commit to build for a controlled release
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -25,6 +31,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Check out trusted release tooling
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
           persist-credentials: false
 
       - name: Set up Node.js
@@ -43,6 +57,16 @@ jobs:
           scripts/cloudflare-artifact-contract.test.mjs
           scripts/cloudflare-final-bundle-contract.test.mjs
 
+      - name: Validate release orchestration and workflow contracts
+        run: node --test .release-tools/scripts/worker-release.test.mjs .release-tools/scripts/worker-release-workflow.test.mjs
+
+      - name: Type-check application and Worker
+        run: npm run typecheck
+
+      - name: Run application regression tests with disposable fixtures
+        shell: bash
+        run: env -u DATABASE_URL DEPLOYMENT_MODE=local npm test
+
       - name: Build OpenNext Worker
         shell: bash
         run: env -u DATABASE_URL npm run cf:build
@@ -56,11 +80,19 @@ jobs:
       - name: Scan final custom Worker bundle for secrets
         run: npm run cf:secret-scan
 
+      - name: Package exact scanned bytes for release without build hooks
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: node .release-tools/scripts/worker-release-artifact.mjs
+
+      - name: Validate upload package without authentication or remote writes
+        run: npx wrangler versions upload --dry-run --config dist/worker-release/wrangler.json --no-bundle
+
       - name: Start workerd and run HTTP smoke tests
         shell: bash
         run: |
           set -euo pipefail
-          env -u DATABASE_URL npx wrangler dev --local --port 8787 \
+          env -u DATABASE_URL npx wrangler dev --local --port 8787 --config dist/worker-release/wrangler.json \
             --var TEAM_DOMAIN:https://ci.cloudflareaccess.com \
             --var POLICY_AUD:ci-audience \
             --var ACCESS_ALLOWED_EMAIL:ci-user@example.invalid \
@@ -77,6 +109,15 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
+
+      - name: Upload immutable release payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: worker-release-${{ inputs.source_sha || github.sha }}
+          path: dist/worker-release/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload workerd log on failure
         if: failure()

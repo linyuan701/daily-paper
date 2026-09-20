@@ -1,0 +1,129 @@
+name: Controlled Worker release
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Full 40-character commit SHA already on master
+        required: true
+        type: string
+      expected_deployment_id:
+        description: Current Cloudflare production deployment UUID (stale values fail closed)
+        required: true
+        type: string
+      mode:
+        description: Dry-run is secret-free; upload creates a version without switching traffic
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - upload
+          - deploy
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-paper-worker-production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require an immutable, reviewed source and expected production state
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.commit_sha }}
+          EXPECTED_DEPLOYMENT_ID: ${{ inputs.expected_deployment_id }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$EXPECTED_DEPLOYMENT_ID" =~ ^[a-f0-9]{8}-([a-f0-9]{4}-){3}[a-f0-9]{12}$ ]]
+          test "$(git rev-parse "$SOURCE_SHA^{commit}")" = "$SOURCE_SHA"
+          git merge-base --is-ancestor "$SOURCE_SHA" origin/master
+
+  build:
+    needs: validate
+    uses: ./.github/workflows/cloudflare-preview.yml
+    with:
+      source_sha: ${{ inputs.commit_sha }}
+    # No secrets are passed to the reusable build.
+
+  security:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.commit_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --fund=false
+      - name: Preserve the production dependency audit gate
+        run: node scripts/production-audit-check.mjs
+      - name: Scan source and history without publishing findings or secret material
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
+  production:
+    needs: [validate, build, security]
+    if: inputs.mode != 'dry-run'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - name: Check out release controller (not the candidate source)
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install pinned uploader without lifecycle scripts or production credentials
+        run: npm ci --ignore-scripts --no-audit --fund=false
+      - uses: actions/download-artifact@v7
+        with:
+          name: worker-release-${{ inputs.commit_sha }}
+          path: release-payload
+      - name: Check production, upload version, optionally deploy, and verify
+        env:
+          RELEASE_MODE: ${{ inputs.mode }}
+          SOURCE_SHA: ${{ inputs.commit_sha }}
+          EXPECTED_DEPLOYMENT_ID: ${{ inputs.expected_deployment_id }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WORKER_BASE_URL: ${{ vars.WORKER_BASE_URL }}
+          WORKER_CRITICAL_API_PATH: ${{ vars.WORKER_CRITICAL_API_PATH }}
+          WORKER_ACCESS_CLIENT_ID: ${{ secrets.WORKER_ACCESS_CLIENT_ID }}
+          WORKER_ACCESS_CLIENT_SECRET: ${{ secrets.WORKER_ACCESS_CLIENT_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/worker-release.mjs
+      - name: Retain sanitized release evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: worker-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/worker-release/evidence.json
+          if-no-files-found: warn
+          retention-days: 90

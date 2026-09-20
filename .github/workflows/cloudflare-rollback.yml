@@ -1,0 +1,71 @@
+name: Controlled Worker rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_id:
+        description: Known existing Cloudflare Worker version UUID
+        required: true
+        type: string
+      historical_deployment_id:
+        description: Historical deployment UUID that served this version at 100 percent
+        required: true
+        type: string
+      expected_deployment_id:
+        description: Current production deployment UUID (concurrency guard)
+        required: true
+        type: string
+      dry_run:
+        description: Validate credentials, history, bindings and health without changing traffic
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-paper-worker-production
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    if: github.ref == 'refs/heads/master'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      # Built-in Node APIs only: rollback never installs, builds, or uploads code.
+      - name: Validate and restore an existing version
+        env:
+          RELEASE_MODE: rollback
+          ROLLBACK_VERSION_ID: ${{ inputs.version_id }}
+          HISTORICAL_DEPLOYMENT_ID: ${{ inputs.historical_deployment_id }}
+          EXPECTED_DEPLOYMENT_ID: ${{ inputs.expected_deployment_id }}
+          ROLLBACK_DRY_RUN: ${{ inputs.dry_run }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WORKER_BASE_URL: ${{ vars.WORKER_BASE_URL }}
+          WORKER_CRITICAL_API_PATH: ${{ vars.WORKER_CRITICAL_API_PATH }}
+          WORKER_ACCESS_CLIENT_ID: ${{ secrets.WORKER_ACCESS_CLIENT_ID }}
+          WORKER_ACCESS_CLIENT_SECRET: ${{ secrets.WORKER_ACCESS_CLIENT_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/worker-release.mjs
+      - name: Retain sanitized rollback evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: worker-rollback-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/worker-release/evidence.json
+          if-no-files-found: warn
+          retention-days: 90
