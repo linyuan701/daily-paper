@@ -48,9 +48,26 @@ is performed by this release system. If the existing credential cannot complete
 the selected read, the operation fails before upload/deployment. No Worker secret
 values or database credentials are required in the release job.
 
-The initial audited master still fails its existing production dependency audit.
-PR #46 is a separate unmerged repair. The release workflow preserves this gate;
-it cannot silently promote that vulnerable baseline.
+PR #46's dependency security repair and PR #44's cloud-only support decision are
+merged in master `fca4dc7a51d6d737869648bbf50180e5f396a802`. The release
+workflow audits the selected source's own lockfile; a newer secure master does
+not make an older source's dependencies safe. The audit gate is never bypassed.
+
+### First production acceptance baseline
+
+Do not deploy current master or the unmerged #45 just to exercise this workflow.
+First confirm the existing production version, deployment, 100% traffic, exact
+source/build provenance, and an existing scoped critical-read credential. Record
+the pre-acceptance version/deployment as the rollback target before uploading.
+After a controlled acceptance deployment, use the independent rollback workflow
+to restore that version and verify traffic, liveness and the same critical read.
+
+The current release contract accepts only commits already on master. The legacy
+`9f660d2` annotation alone is insufficient to authorize or reproduce that build;
+an off-master historical release needs separate verified provenance and an
+explicitly reviewed source-policy change. Do not weaken ancestry or dependency
+checks simply to make a legacy acceptance run pass. If the old baseline cannot
+be established safely, leave production unchanged and report the evidence gap.
 
 ## Release sequence
 
