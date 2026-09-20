@@ -38,7 +38,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
-          path: .release-tools
+          path: .build-home/release-tools
           persist-credentials: false
 
       - name: Set up Node.js
@@ -58,7 +58,7 @@ jobs:
           scripts/cloudflare-final-bundle-contract.test.mjs
 
       - name: Validate release orchestration and workflow contracts
-        run: node --test .release-tools/scripts/worker-release.test.mjs .release-tools/scripts/worker-release-workflow.test.mjs
+        run: node --test .build-home/release-tools/scripts/worker-release.test.mjs .build-home/release-tools/scripts/worker-release-workflow.test.mjs
 
       - name: Type-check application and Worker
         run: npm run typecheck
@@ -83,7 +83,7 @@ jobs:
       - name: Package exact scanned bytes for release without build hooks
         env:
           SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
-        run: node .release-tools/scripts/worker-release-artifact.mjs
+        run: node .build-home/release-tools/scripts/worker-release-artifact.mjs
 
       - name: Validate upload package without authentication or remote writes
         run: npx wrangler versions upload --dry-run --config dist/worker-release/wrangler.json --no-bundle
