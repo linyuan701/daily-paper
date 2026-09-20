@@ -28,8 +28,10 @@ The installed official Sites 0.1.65 skills specify:
    This is a private live deployment, not an isolated staging URL.
 
 `scripts/package.mjs` is a minimal entry for step 5. On Windows it locates Git's
-bundled bash for that child process only; it does not replace the official
-packager or change machine configuration. `scripts/verify-package.mjs` checks
+bundled bash for that child process only and converts drive-letter paths to
+`/c/...` paths so GNU tar does not interpret a drive colon as a remote host.
+It does not replace the official packager or change machine configuration.
+`scripts/verify-package.mjs` checks
 the Worker/manifest and rejects secret/transport code markers in browser assets.
 
 The official npm launcher currently fails on this Windows host by resolving

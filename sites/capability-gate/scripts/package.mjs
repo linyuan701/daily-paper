@@ -17,7 +17,12 @@ if (process.platform === "win32") {
     if (existsSync(path.join(bashDirectory, "bash.exe"))) environment.PATH = bashDirectory + path.delimiter + process.env.PATH;
   }
 }
-const result = spawnSync(process.execPath, [helper, project.replaceAll("\\", "/"), archive.replaceAll("\\", "/")], {
+// GNU tar treats a Windows drive colon as a remote-host separator. Git Bash
+// accepts /c/... paths and converts them for the packager's Node subprocesses.
+const bashPath = value => process.platform === "win32"
+  ? value.replaceAll("\\", "/").replace(/^([A-Za-z]):\//, (_, drive) => "/" + drive.toLowerCase() + "/")
+  : value;
+const result = spawnSync(process.execPath, [helper, bashPath(project), bashPath(archive)], {
   cwd: project, env: environment, stdio: "inherit"
 });
 if (result.error) throw result.error;
