@@ -282,3 +282,16 @@ test("artifact hashes detect tampering, unexpected files and unsafe uploader set
     await assert.rejects(verifyArtifact(root, sha), /unsupported settings/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("release inventory rejects workerd state and database files even before hashing", async () => {
+  const root = await mkdtemp(resolve(tmpdir(), "worker-release-state-test-"));
+  try {
+    await mkdir(resolve(root, ".wrangler/state"), { recursive: true });
+    await writeFile(resolve(root, ".wrangler/state/metadata.sqlite"), "disposable fixture");
+    await assert.rejects(inventory(root), /Unexpected release artifact file/);
+    await rm(resolve(root, ".wrangler"), { recursive: true, force: true });
+    await mkdir(resolve(root, "assets"));
+    await writeFile(resolve(root, "assets/metadata.sqlite"), "disposable fixture");
+    await assert.rejects(inventory(root), /Runtime state or credentials/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

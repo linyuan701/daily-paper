@@ -93,6 +93,7 @@ jobs:
         run: |
           set -euo pipefail
           env -u DATABASE_URL npx wrangler dev --local --port 8787 --config dist/worker-release/wrangler.json \
+            --persist-to "$RUNNER_TEMP/worker-smoke-state" \
             --var DEPLOYMENT_MODE:cloud \
             --var DAILY_PAPER_RUNTIME_TARGET:cloudflare \
             --var NEXT_PUBLIC_DEPLOYMENT_MODE:cloud \
@@ -103,6 +104,11 @@ jobs:
           workerd_pid=$!
           trap 'kill "$workerd_pid" 2>/dev/null || true; wait "$workerd_pid" 2>/dev/null || true' EXIT
           BASE_URL=http://localhost:8787 node scripts/cloudflare-preview-smoke.mjs
+
+      - name: Verify smoke preserved the complete immutable payload
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: node .build-home/release-tools/scripts/worker-release-artifact.mjs verify
 
       - name: Upload verified Worker bundle
         uses: actions/upload-artifact@v7

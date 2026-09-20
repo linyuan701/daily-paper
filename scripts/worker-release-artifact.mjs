@@ -18,6 +18,10 @@ export async function inventory(root) {
       else {
         assert.ok(entry.isFile(), "Unsupported artifact entry");
         const name = relative(root, file).replaceAll("\\", "/");
+        assert.ok(name === "manifest.json" || name === "wrangler.json" ||
+          name.startsWith("assets/") || name.startsWith("worker/"), "Unexpected release artifact file");
+        assert.ok(!/(?:^|\/)(?:\.env(?:\.|$)|\.dev\.vars|\.wrangler)(?:\/|\.|$)|\.(?:db|sqlite|sqlite3)(?:-|$)/i.test(name),
+          "Runtime state or credentials must not enter a release artifact");
         if (name !== "manifest.json") entries[name] = digest(await readFile(file));
       }
     }
@@ -79,5 +83,9 @@ export async function verifyArtifact(root, expectedSha) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await packArtifact(process.cwd(), process.env.SOURCE_SHA, resolve("dist/worker-release"));
+  if (process.argv[2] === "verify") {
+    await verifyArtifact(resolve("dist/worker-release"), process.env.SOURCE_SHA);
+  } else {
+    await packArtifact(process.cwd(), process.env.SOURCE_SHA, resolve("dist/worker-release"));
+  }
 }
