@@ -183,6 +183,32 @@ test("rollback requires proof the requested version was in the historical deploy
   assert.equal(f.writes.length, 0);
 });
 
+test("rollback actually transitions from the new version to the known old version", async () => {
+  const f = fixture("rollback");
+  const currentId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
+  f.setActive(deployment(currentId, newVersion));
+  f.input.expectedDeployment = currentId;
+  const result = await executeRelease(f.input, f.deps);
+  assert.equal(result.before.versions[0].version_id, newVersion);
+  assert.equal(result.active.versions[0].version_id, oldVersion);
+  assert.equal(result.rollback_version_id, newVersion);
+  assert.equal(result.status, "verified");
+});
+
+test("recovery rechecks deployment after HTTP checks before claiming recovery", async () => {
+  const f = fixture();
+  let probes = 0;
+  f.deps.probe = async () => {
+    probes += 1;
+    if (probes === 2) throw new Error("CRITICAL_API_FAILED");
+    if (probes === 3) f.setActive(deployment("dddddddd-dddd-dddd-dddd-dddddddddddd", newVersion));
+    return [];
+  };
+  await assert.rejects(executeRelease(f.input, f.deps), /CRITICAL_API_FAILED/);
+  assert.equal(f.saves.at(-1).recovery, undefined);
+  assert.equal(f.saves.at(-1).recovery_error, "RECOVERY_NOT_VERIFIED_REQUIRES_OPERATOR");
+});
+
 test("explicit rollback can recover an unhealthy current application", async () => {
   const f = fixture("rollback");
   let calls = 0;

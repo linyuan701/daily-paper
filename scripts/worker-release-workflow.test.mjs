@@ -41,6 +41,8 @@ test("release requires full commit, ancestry, secret-free shared build and defau
   assert.match(build, /versions upload --dry-run/);
   assert.match(build, /cloudflare-preview-smoke\.mjs/);
   assert.match(build, /wrangler dev --local[^\n]+--config dist\/worker-release\/wrangler\.json/);
+  assert.match(build, /--var DEPLOYMENT_MODE:cloud/);
+  assert.match(build, /path: \.build-home\/release-tools/);
   assert.doesNotMatch(build, /secrets\./);
   assert.ok(build.indexOf("npm run cf:secret-scan") < build.indexOf("worker-release-artifact.mjs"));
   assert.ok(build.indexOf("cloudflare-preview-smoke.mjs") < build.indexOf("Upload immutable release payload"));

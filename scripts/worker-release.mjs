@@ -267,7 +267,10 @@ export async function executeRelease(input, deps) {
           unchanged(baseline, recovered, recovery.id);
           if (recovered.version.id !== baseline.version.id) fail("RECOVERY_VERSION_MISMATCH");
           evidence.recovery_checks = await probe();
-          evidence.recovery = deploymentEvidence(recovered.deployment);
+          const afterRecoveryChecks = await snapshot(cf);
+          unchanged(baseline, afterRecoveryChecks, recovery.id);
+          if (afterRecoveryChecks.version.id !== baseline.version.id) fail("RECOVERY_VERSION_MISMATCH");
+          evidence.recovery = deploymentEvidence(afterRecoveryChecks.deployment);
         }
       } catch { evidence.recovery_error = "RECOVERY_NOT_VERIFIED_REQUIRES_OPERATOR"; }
     }

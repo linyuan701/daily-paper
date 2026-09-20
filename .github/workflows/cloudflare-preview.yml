@@ -93,6 +93,9 @@ jobs:
         run: |
           set -euo pipefail
           env -u DATABASE_URL npx wrangler dev --local --port 8787 --config dist/worker-release/wrangler.json \
+            --var DEPLOYMENT_MODE:cloud \
+            --var DAILY_PAPER_RUNTIME_TARGET:cloudflare \
+            --var NEXT_PUBLIC_DEPLOYMENT_MODE:cloud \
             --var TEAM_DOMAIN:https://ci.cloudflareaccess.com \
             --var POLICY_AUD:ci-audience \
             --var ACCESS_ALLOWED_EMAIL:ci-user@example.invalid \
