@@ -295,3 +295,16 @@ test("release inventory rejects workerd state and database files even before has
     await assert.rejects(inventory(root), /Runtime state or credentials/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("release inventory rejects environment-file variants inside assets", async () => {
+  const root = await mkdtemp(resolve(tmpdir(), "worker-release-env-test-"));
+  try {
+    await mkdir(resolve(root, "assets"));
+    for (const name of [".env", ".env.production", ".dev.vars", ".dev.vars.production"]) {
+      const file = resolve(root, "assets", name);
+      await writeFile(file, "fixture");
+      await assert.rejects(inventory(root), /Runtime state or credentials/);
+      await rm(file);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

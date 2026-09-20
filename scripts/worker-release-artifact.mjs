@@ -20,7 +20,7 @@ export async function inventory(root) {
         const name = relative(root, file).replaceAll("\\", "/");
         assert.ok(name === "manifest.json" || name === "wrangler.json" ||
           name.startsWith("assets/") || name.startsWith("worker/"), "Unexpected release artifact file");
-        assert.ok(!/(?:^|\/)(?:\.env(?:\.|$)|\.dev\.vars|\.wrangler)(?:\/|\.|$)|\.(?:db|sqlite|sqlite3)(?:-|$)/i.test(name),
+        assert.ok(!/(?:^|\/)(?:\.env(?:[./]|$)|\.dev\.vars(?:[./]|$)|\.wrangler(?:\/|$))|\.(?:db|sqlite|sqlite3)(?:-|$)/i.test(name),
           "Runtime state or credentials must not enter a release artifact");
         if (name !== "manifest.json") entries[name] = digest(await readFile(file));
       }
