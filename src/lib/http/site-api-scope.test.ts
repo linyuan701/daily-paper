@@ -5,6 +5,45 @@ const env = { TEAM_DOMAIN: "https://fixture.cloudflareaccess.com", POLICY_AUD: "
 const request = (path: string, method = "GET") => new Request(`https://worker.example.test${path}`, { method, headers: { "cf-access-jwt-assertion": "fixture-token" } });
 const claims = { type: "app", common_name: "fixture.access", exp: Date.now() / 1000 + 3600 };
 describe("Site principal scope", () => {
+  it("never enables a local preview authentication bypass for the deployed dashboard contract", async () => {
+    for (const hostname of ["localhost", "127.0.0.1"]) {
+      const response = await verifyCloudflareAccess(new Request(`http://${hostname}/api/site/dashboard`),
+        { ...env, ACCESS_JWT_LOCAL_PREVIEW_BYPASS: "true" }, vi.fn());
+      expect(response).toEqual({ ok: false, code: "ACCESS_TOKEN_REQUIRED" });
+    }
+  });
+  it("keeps readiness outside the Site grant", async () => {
+    expect(isSiteApiRequest(request("/api/health/ready"))).toBe(false);
+    expect((await verifyCloudflareAccess(request("/api/health/ready"), env, vi.fn().mockResolvedValue(claims))).ok).toBe(false);
+  });
+  it("retains the deployed legacy audience only for the exact dashboard GET", async () => {
+    const legacy = { ...env, SITE_API_POLICY_AUD: "", SITE_READ_POLICY_AUD: "legacy-aud", SITE_READ_ACCESS_CLIENT_ID: "fixture.access" };
+    const verify = vi.fn().mockImplementation(async ({ audience }) => {
+      if (audience !== "legacy-aud") throw new Error("wrong audience");
+      return claims;
+    });
+    expect((await verifyCloudflareAccess(request("/api/site/dashboard"), legacy, verify)).ok).toBe(true);
+    for (const [path, method] of [["/api/site/dashboard", "POST"], ["/api/site/dashboard/", "GET"], ["/api/site/capabilities", "GET"], ["/api/feedback/actions", "POST"], ["/api/health/ready", "GET"]]) {
+      expect((await verifyCloudflareAccess(request(path, method), legacy, verify)).ok).toBe(false);
+    }
+  });
+  it("never promotes legacy credentials when the new API grant is enabled", async () => {
+    const both = { ...env, SITE_READ_POLICY_AUD: "legacy-aud", SITE_READ_ACCESS_CLIENT_ID: "legacy.access" };
+    const legacyVerify = vi.fn().mockImplementation(async ({ audience }) => {
+      if (audience !== "legacy-aud") throw new Error("wrong audience");
+      return { ...claims, common_name: "legacy.access" };
+    });
+    expect((await verifyCloudflareAccess(request("/api/site/dashboard"), both, legacyVerify)).ok).toBe(true);
+    for (const [path, method] of [["/api/feedback/actions", "POST"], ["/api/candidates/content", "PUT"], ["/api/site/capabilities", "GET"], ["/api/health/ready", "GET"]]) {
+      expect((await verifyCloudflareAccess(request(path, method), both, legacyVerify)).ok).toBe(false);
+    }
+    const apiVerify = vi.fn().mockImplementation(async ({ audience }) => {
+      if (audience !== env.SITE_API_POLICY_AUD) throw new Error("wrong audience");
+      return claims;
+    });
+    expect((await verifyCloudflareAccess(request("/api/feedback/actions", "POST"), both, apiVerify)).ok).toBe(true);
+    expect((await verifyCloudflareAccess(request("/api/health/ready"), both, apiVerify)).ok).toBe(false);
+  });
   it("checks an exact path and method, never job/refresh/admin execution", () => {
     for (const [path, method] of [["/api/feedback/actions", "POST"], ["/api/candidates/content", "PUT"], ["/api/profile/refresh", "GET"]]) expect(isSiteApiRequest(request(path, method))).toBe(true);
     for (const [path, method] of [["/api/profile/refresh", "POST"], ["/api/operations/retry", "POST"], ["/api/jobs/daily", "POST"], ["/api/candidates/content", "POST"], ["/api/feedback/actions/", "POST"], ["/", "GET"]]) expect(isSiteApiRequest(request(path, method))).toBe(false);

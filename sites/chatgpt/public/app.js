@@ -225,7 +225,7 @@ function operations() {
   return (
     heading("运行状态", "持久化 pipeline 状态与 GitHub 工作流分别展示") +
     error("operations") +
-    `<section class="panel"><h2>Worker 部署</h2>${error("capabilities")}<p>SHA <code>${esc(build?.sha ?? "未知：生产部署尚未提供版本标记")}</code></p><p class="meta">构建时间 ${time(build?.builtAt)}</p>${error("ready")}<p>API readiness ${badge(state.data.ready?.status)}</p></section>${
+    `<section class="panel"><h2>Worker 部署</h2>${error("capabilities")}<p>SHA <code>${esc(build?.sha ?? "未知：生产部署尚未提供版本标记")}</code></p><p class="meta">构建时间 ${time(build?.builtAt)}</p><p>Site API ${badge(state.data.capabilities?.status)}</p></section>${
       runs()
         .map(
           (run) =>
@@ -324,7 +324,6 @@ async function load() {
     get("refresh", "refresh"),
     get("operations", "operations"),
     get("capabilities", "capabilities"),
-    get("ready", "ready"),
     get("github", "/api/github-runs"),
   ]);
   if (revision !== state.revision) return;

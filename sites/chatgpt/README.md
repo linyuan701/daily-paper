@@ -35,7 +35,7 @@ handler. Only the build and isolated tests use Node. Test fixtures are not bundl
 | `/papers[?runId=…]` | Top 20 in stored order; latest-action feedback hydration | recommendations/daily, feedback/logs |
 | `/paper?runId=…&id=…` | Original/Chinese abstract, reasons, Recall/Rerank evidence, corrections | ranking/recall, ranking/rerank, feedback/actions, candidates/content |
 | `/profile` | Active snapshot, positive labels, negative signals, consumption evidence, refresh status | profile/snapshot, profile/refresh |
-| `/operations` | Recent runs/stages/source degradation, readiness, Worker build identity | operations/runs, health/ready, site/capabilities |
+| `/operations` | Recent runs/stages/source degradation, Site API status, Worker build identity | operations/runs, site/capabilities |
 | `/history[?runId=…]` | Recent run navigation and feedback logs | operations/runs, recommendations/daily, feedback/logs |
 
 Paths above are relative to `/api/`. The BFF route map lives in `src/proxy.mjs`.
@@ -60,6 +60,9 @@ save. Recall/Rerank evidence is displayed only when stored run IDs match the fee
   counters and negative signal evidence. Absent evidence means unknown, not zero.
 - `GET /api/site/capabilities`: contract version, supported feedback actions,
   refresh-execution=false and optional injected Worker build SHA/time.
+- `GET /api/site/dashboard`: compatibility aggregation for the existing live
+  read-only Site. DTO v1 is documented in `docs/site-dashboard-api.md`. It reads
+  persisted results and validates their linkage; it never recalculates scores.
 - Optional scoped machine authorization in `verifyCloudflareAccess`. It grants
   exactly the Site read routes, POST feedback and PUT content; never job dispatch,
   POST refresh, reranking, ingestion or collection/journal administration.
@@ -122,19 +125,44 @@ Stop it after validation. Hosted operation never depends on this process.
 
 ## Cloud adoption gates
 
-1. Review/merge the backend and Site source proposal independently of PR #44.
+1. Review the backend and Site source proposal independently of PR #44. Keep #45
+   Draft until production read/write validation is complete; do not merge first.
 2. Release the reviewed backend through GitHub/cloud infrastructure. Master
    currently contains build/preview CI but no production Worker release workflow;
    do not replace that gap with a workstation deployment command.
 3. Provision/configure scoped Access authorization while preserving the original
    owner web access. Set Site secrets and owner authorization through Sites.
    Existing Site secret names alone are not proof of compatible permissions.
-4. Restore the Sites plugin packaging tooling and resolve the observed SIWC
-   callback returning to the login gate. Use the same registered project ID.
-5. Verify real read contracts, then a user-selected real feedback write + log
-   readback. Check original web behavior and a real daily run before replacement.
-6. Publish privately through Sites after checks. Sites deployment URLs are live
+4. The Sites runtime gate has passed on private version 4. Normal owner sign-in
+   and server-only secrets work. OpenAI login challenges are external authentication
+   behavior, not an established application callback bug. Use the same project ID.
+5. Complete code, fixture, package and secret-scan checks, then publish the exact
+   reviewed candidate privately through Sites. Sites deployment URLs are live
    publications, not isolated staging previews. Do not overwrite the current
    working publication with a disconnected prototype or widen its audience.
+6. On that deployed candidate, verify real read contracts first, then exactly one
+   approved feedback write through the Site UI and log readback through both Site
+   and the original API. Verify desktop/mobile, original web and daily state.
+   Neither the old v4 Site nor a direct API write substitutes for this gate.
 
 Until these gates pass, this Site cannot replace the current cloud web.
+
+## Official package contract
+
+Configure the installed Sites execution profile in this directory first. Run
+`npm run build` then `npm run verify:artifact`. The build emits
+`dist/server/index.js`, `dist/client/` and `dist/.openai/hosting.json`.
+Run `npm run package -- ABSOLUTE_SITES_PLUGIN_ROOT ABSOLUTE_SITE_PROJECT ABSOLUTE_ARCHIVE`.
+The launcher invokes the installed official `scripts/package-site.mjs`; it only
+adapts Windows Git Bash discovery and absolute drive paths. There is no alternate
+hosting runtime. The package step also scans the artifact. Runtime secrets stay in
+Sites; neither builds nor GitHub CI need actual Access secrets.
+
+Publish a mirror of this exact GitHub source at the selected Site repository root,
+push the source revision, save the matching archive/version, and deploy privately.
+No one-shot gate route or canary secret is required by this production frontend.
+The old `SITE_READ_*` Worker grant remains restricted to dashboard GET only;
+`SITE_API_*` is a separate explicit opt-in. `/api/health/ready` remains outside both
+Site service grants and is not requested by this frontend.
+
+See `docs/site-production-integration.md` for the current evidence and blockers.

@@ -9,6 +9,19 @@ import type {
 export class PrismaProfileSnapshotRepository implements ProfileSnapshotRepository {
   constructor(private readonly db: PrismaClient) {}
 
+  async getSnapshotForDashboard(profileSnapshotId?: string) {
+    const snapshot = await this.db.profileSnapshot.findFirst({
+      where: profileSnapshotId ? { id: profileSnapshotId } : { status: "ACTIVE" },
+      select: {
+        id: true, status: true, builtAt: true, sourceLibraryVersion: true,
+        itemsCount: true, summaryJson: true,
+        researchTypePreferences: { select: { category: true, weight: true, itemCount: true } }
+      },
+      orderBy: [{ builtAt: "desc" }, { createdAt: "desc" }]
+    });
+    return snapshot ? { snapshot: mapSnapshotSummary(snapshot), summaryJson: snapshot.summaryJson } : null;
+  }
+
   async listEligibleItems() {
     const items = await this.db.zoteroItemRaw.findMany({
       where: {

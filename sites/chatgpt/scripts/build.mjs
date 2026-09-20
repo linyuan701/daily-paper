@@ -5,6 +5,7 @@ const root = fileURLToPath(new URL("..", import.meta.url));
 const output = join(root, "dist/server");
 await mkdir(output, { recursive: true });
 await mkdir(join(root, "dist/.openai"), { recursive: true });
+await mkdir(join(root, "dist/client"), { recursive: true });
 const assets = {};
 for (const [name, type] of Object.entries({
   "index.html": "text/html; charset=utf-8",
@@ -17,6 +18,7 @@ for (const [name, type] of Object.entries({
     type,
     body: await readFile(join(root, "public", name), "utf8"),
   };
+  await copyFile(join(root, "public", name), join(root, "dist/client", name));
 }
 const proxySource = await readFile(join(root, "src/proxy.mjs"), "utf8");
 const workerSource = (

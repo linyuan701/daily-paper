@@ -1,5 +1,10 @@
 # Site integration validation — 2026-09-19
 
+Historical initial-prototype record. For the 2026-09-20 capability-gate outcome,
+formal dashboard contract, current deployment observations and unresolved
+production integration, see [current integration record](site-production-integration.md).
+The old plugin/sign-in blockers below are not current runtime limitations.
+
 Baseline: `origin/master@d8552a0468a5970ee530195726f6c96e04b286b3`.
 Implementation: `codex/chatgpt-site-frontend`, IN DEVELOPMENT / NOT_DEPLOYED.
 

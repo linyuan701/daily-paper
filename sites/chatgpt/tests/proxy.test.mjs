@@ -80,6 +80,7 @@ test("a fixed HTTPS route forwards only server credentials and allowed query", a
 });
 test("reject arbitrary paths, query parameters and methods", async () => {
   for (const [name, req] of [
+    ["ready", request("ready")],
     ["jobs", request("jobs")],
     ["feed", request("feed?url=https://evil.test")],
     ["refresh", request("refresh", { method: "POST" })],

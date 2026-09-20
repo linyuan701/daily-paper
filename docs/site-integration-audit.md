@@ -38,7 +38,7 @@ Actions conclusion does not imply all sources were healthy.
 | Active profile | GET /api/profile/snapshot | ProfileBuildService, immutable snapshot | Profile |
 | Refresh status | GET /api/profile/refresh | ProfileRefreshService | Profile, Dashboard |
 | Recent runs, stages, source degradation | GET /api/operations/runs?limit=10 | OperationsService, persisted stages | Operations, History |
-| DB availability | GET /api/health/ready | Worker readiness query | Connection status |
+| DB availability | GET /api/health/ready | Owner-only Worker readiness query | Outside Site service scope; Site uses capabilities |
 
 The current web also exposes collection priorities, journals and guarded workflow
 retry. They remain in the original web; phase-one Site does not dispatch jobs or

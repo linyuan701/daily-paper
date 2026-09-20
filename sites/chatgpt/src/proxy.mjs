@@ -22,7 +22,6 @@ export const routes = Object.freeze({
     fixed: { limit: "500" },
   },
   capabilities: { method: "GET", path: "/api/site/capabilities" },
-  ready: { method: "GET", path: "/api/health/ready" },
   feedback: { method: "POST", path: "/api/feedback/actions" },
   content: { method: "PUT", path: "/api/candidates/content" },
 });
