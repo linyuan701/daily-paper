@@ -52,8 +52,8 @@
     "@prisma/client": "6.19.3",
     "dotenv": "^16.6.1",
     "jose": "6.2.4",
-    "next": "15.5.21",
-    "nodemailer": "9.0.3",
+    "next": "15.5.25",
+    "nodemailer": "9.1.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
@@ -71,5 +71,14 @@
   },
   "engines": {
     "node": ">=22 <25"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.23",
+      "sharp": "0.35.4"
+    },
+    "@prisma/config@6.19.3": {
+      "deepmerge-ts": "8.0.2"
+    }
   }
 }
