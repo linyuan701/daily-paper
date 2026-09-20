@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import { isSiteApiRequest } from "./site-api-scope";
 
 export type AccessEnvironment = Record<string, string | undefined>;
 
@@ -22,6 +23,7 @@ export async function verifyCloudflareAccess(
   const requestUrl = new URL(request.url);
   if (
     environment.ACCESS_JWT_LOCAL_PREVIEW_BYPASS === "true" &&
+    requestUrl.pathname !== "/api/site/dashboard" &&
     (requestUrl.hostname === "localhost" || requestUrl.hostname === "127.0.0.1")
   ) {
     return { ok: true, email: "local-preview" };
@@ -40,9 +42,40 @@ export async function verifyCloudflareAccess(
   }
 
   try {
+    // A service assertion is accepted only on the frozen Site API scope, and only
+    // after signature, issuer, separate audience and exact principal verification.
+    const principals = isSiteApiRequest(request) ? [{
+      audience: environment.SITE_API_POLICY_AUD?.trim(),
+      client: environment.SITE_API_ACCESS_CLIENT_ID?.trim()
+    }] : [];
+    // Preserve the already deployed read-only grant without expanding its scope.
+    if (request.method === "GET" && requestUrl.pathname === "/api/site/dashboard") {
+      principals.push({ audience: environment.SITE_READ_POLICY_AUD?.trim(),
+        client: environment.SITE_READ_ACCESS_CLIENT_ID?.trim() });
+    }
+    for (const { audience: siteAudience, client: siteClient } of principals) {
+      if (!siteAudience || !siteClient) continue;
+      try {
+        const service = await verifyJwt({ token, teamDomain, audience: siteAudience });
+        if (service.type === "app" && service.common_name === siteClient &&
+            (service.email === undefined || service.email === "") &&
+            typeof service.exp === "number" && service.exp > Date.now() / 1000) {
+          return { ok: true, email: "site-service" };
+        }
+        // A path-specific Access application must retain its owner policy too.
+        // This audience never authorizes personal sessions outside the Site scope.
+        if (service.type === "app" && service.common_name === undefined &&
+            typeof service.email === "string" && service.email.trim().toLowerCase() === allowedEmail &&
+            typeof service.exp === "number" && service.exp > Date.now() / 1000) {
+          return { ok: true, email: allowedEmail };
+        }
+      } catch {
+        // The existing personal-session audience remains independently valid.
+      }
+    }
     const payload = await verifyJwt({ token, teamDomain, audience });
     const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : "";
-    if (!email || email !== allowedEmail) {
+    if (payload.common_name !== undefined || !email || email !== allowedEmail) {
       return { ok: false, code: "ACCESS_TOKEN_INVALID" };
     }
     return { ok: true, email };

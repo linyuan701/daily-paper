@@ -1,5 +1,6 @@
 ﻿import type { Prisma, PrismaClient } from "../../generated/prisma";
 import { toIsoDate } from "../../lib/utils";
+import { projectFeedbackEvidence } from "../../modules/profile-build/persisted-evidence";
 import type {
   ProfileSnapshotRepository,
   ProfileSnapshotSummary
@@ -7,6 +8,19 @@ import type {
 
 export class PrismaProfileSnapshotRepository implements ProfileSnapshotRepository {
   constructor(private readonly db: PrismaClient) {}
+
+  async getSnapshotForDashboard(profileSnapshotId?: string) {
+    const snapshot = await this.db.profileSnapshot.findFirst({
+      where: profileSnapshotId ? { id: profileSnapshotId } : { status: "ACTIVE" },
+      select: {
+        id: true, status: true, builtAt: true, sourceLibraryVersion: true,
+        itemsCount: true, summaryJson: true,
+        researchTypePreferences: { select: { category: true, weight: true, itemCount: true } }
+      },
+      orderBy: [{ builtAt: "desc" }, { createdAt: "desc" }]
+    });
+    return snapshot ? { snapshot: mapSnapshotSummary(snapshot), summaryJson: snapshot.summaryJson } : null;
+  }
 
   async listEligibleItems() {
     const items = await this.db.zoteroItemRaw.findMany({
@@ -290,7 +304,13 @@ export class PrismaProfileSnapshotRepository implements ProfileSnapshotRepositor
         status: "ACTIVE"
       },
       include: {
-        researchTypePreferences: true
+        researchTypePreferences: true,
+        itemSignals: {
+          where: { contentRecallLabel: { not: null } },
+          select: { contentRecallLabel: true },
+          orderBy: [{ finalWeight: "desc" }, { id: "asc" }],
+          take: 100
+        }
       },
       orderBy: [{ builtAt: "desc" }, { createdAt: "desc" }]
     });
@@ -370,6 +390,7 @@ function toObject(value: Prisma.JsonValue | null): Record<string, unknown> | und
 }
 
 function mapSnapshotSummary(snapshot: {
+  itemSignals?: Array<{ contentRecallLabel: string | null }>;
   id: string;
   status: "ACTIVE" | "SUPERSEDED";
   builtAt: Date;
@@ -390,6 +411,10 @@ function mapSnapshotSummary(snapshot: {
       : {};
 
   return {
+    feedbackIntegration: projectFeedbackEvidence(snapshot.summaryJson),
+    positiveLabels: snapshot.itemSignals
+      ? [...new Set(snapshot.itemSignals.flatMap(item => item.contentRecallLabel ? [item.contentRecallLabel] : []))].slice(0, 24)
+      : undefined,
     id: snapshot.id,
     status: snapshot.status === "ACTIVE" ? "active" : "superseded",
     builtAt: toIsoDate(snapshot.builtAt),

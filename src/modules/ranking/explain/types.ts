@@ -8,6 +8,7 @@ export type DailyRecommendationRecord = {
   selected: boolean;
   finalScore: number;
   title?: string;
+  abstractNote?: string;
   publishedAt?: string;
   sources: RecommendationSourceValue[];
   identifiers: {

@@ -1,0 +1,22 @@
+name: ChatGPT Site contract
+on:
+  pull_request:
+    paths:
+      - 'sites/chatgpt/**'
+      - '.github/workflows/site-contract.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  site:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Build and verify isolated Site contract (no credentials or databases)
+        run: npm run test:site

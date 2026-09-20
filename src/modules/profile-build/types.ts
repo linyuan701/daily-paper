@@ -1,5 +1,7 @@
 ﻿import type { NegativeFeedbackSignal } from "../feedback/types";
 
+import type { PersistedFeedbackEvidence } from "./persisted-evidence";
+
 export type ProfileInterestSegmentValue = "recent_core" | "stable_long_term" | "background";
 export type ProfileRepresentationSourceValue = "structured_tags" | "title_abstract";
 
@@ -37,6 +39,8 @@ export type ProfileResearchPreferenceInput = {
 };
 
 export type ProfileSnapshotSummary = {
+  feedbackIntegration?: PersistedFeedbackEvidence;
+  positiveLabels?: string[];
   id: string;
   status: "active" | "superseded";
   builtAt: string;

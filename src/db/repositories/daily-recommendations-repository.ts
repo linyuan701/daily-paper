@@ -69,6 +69,7 @@ function toRecommendation(result: {
   canonicalCandidate: {
     id: string;
     title: string | null;
+    abstractNote?: string | null;
     publishedAt: Date | null;
     doi: string | null;
     pmid: string | null;
@@ -119,6 +120,7 @@ function toRecommendation(result: {
     selected: result.selected,
     finalScore: result.finalScore,
     title: result.canonicalCandidate.title ?? undefined,
+    abstractNote: result.canonicalCandidate.abstractNote ?? undefined,
     publishedAt: result.canonicalCandidate.publishedAt?.toISOString(),
     sources,
     identifiers: {
