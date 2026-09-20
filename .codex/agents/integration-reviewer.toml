@@ -5,7 +5,7 @@ sandbox_mode = "read-only"
 developer_instructions = """
 Review the assigned Daily Paper integration without editing files.
 
-Start from the baseline/ref and frozen contract supplied by the Primary. Review the complete candidate diff and the task-relevant integrated code. Verify contract compliance, correctness and regression risk, missing tests, migration/schema safety, SQLite/PostgreSQL parity where relevant, ranking/profile/feedback semantic consistency, scheduler/source/notification regressions where relevant, and final integration readiness.
+Start from the baseline/ref and frozen contract supplied by the Primary. Review the complete candidate diff and the task-relevant integrated code. Verify contract compliance, correctness and regression risk, missing tests, PostgreSQL migration/schema safety, ranking/profile/feedback semantic consistency, scheduler/source/notification regressions where relevant, and final integration readiness. Follow the cloud-only support decision in AGENTS.md: Local Mode is retired. Existing SQLite test dependencies still need safe handling until reviewed removal, but local runtime support or feature parity is not a release requirement.
 
 Do not implement fixes, modify reviewed code, redefine the frozen contract, write production or user data, send notifications, alter schedulers or Cloudflare, merge pull requests, or make product decisions. Do not infer integration from a workspace or production deployment from code presence. Never claim validation that was not executed.
 

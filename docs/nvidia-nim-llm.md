@@ -43,7 +43,7 @@ The script rejects a non-NVIDIA base URL or abbreviated/wrong model before sendi
 
 If a normal smoke returns `server_error`, explicitly enable the `diagnostic` input. Diagnostic mode makes exactly two bounded calls: an API-reference-style minimal request and the existing structured-output request. It logs the stage and exact HTTP status in addition to the normal bounded metadata, but never logs response bodies, headers, prompts, or credentials. If both stages fail with the same 5xx, the failure is upstream of structured-output parameters; if only the structured stage fails, investigate `response_format` and thinking controls before changing production behavior.
 
-For an equivalent local manual check, inject `NVIDIA_API_KEY` into the current process environment and run `node scripts/nvidia-llm-smoke.mjs`. Remove the process-scoped variable afterward. Never place a real key in `.env.example` or shell history.
+Run this check through the manual GitHub smoke-test workflow. The former local credential-injection procedure is retired under DPO-011; no local Node installation or secret file is required.
 
 ## Retry and rollback
 

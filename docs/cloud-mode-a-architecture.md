@@ -2,6 +2,8 @@
 
 > **Classification: historical design/reference material.** Dated implementation and acceptance statements below are not current project state. See `docs/ARCHITECTURE.md` and `docs/PROJECT_STATE.md`.
 
+> **Local portions retired (2026-09-19):** DPO-011 supersedes this design's Local Mode default/support, SQLite parity, Windows scheduling, and Obsidian filesystem recommendations. They are abandoned plans, not fallback procedures. The supported runtime is GitHub-hosted jobs + external cloud services; see [current architecture](ARCHITECTURE.md#cloud-execution-boundary). The text below is preserved as history.
+
 Implementation update (2026-07-27): PR 4 now includes the OpenNext Worker runtime, Neon adapter client, capability/request guards, health split, and deployment runbook. Real GitHub/Neon/Cloudflare account acceptance is still pending credentials.
 
 Status: approved architecture; PR 1–PR 3 contracts are implemented. Worker deployment remains future PR 4 scope.

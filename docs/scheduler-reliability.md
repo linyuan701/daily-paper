@@ -2,6 +2,8 @@
 
 > **Classification: operational design/runbook reference.** It describes intended scheduler mechanics. Deployment and current runtime health are tracked separately in `docs/PROJECT_STATE.md`.
 
+> **Cloud-only execution (DPO-011):** The supported clocks dispatch GitHub-hosted jobs. Validation commands below describe runner steps, not a local installation requirement. Windows scheduling and local fallback are retired; GitHub CI provides build/preview validation. The Worker production release workflow remains a tracked gap.
+
 The production daily trigger has two independent clocks but one existing GitHub Actions execution path:
 
 ```text

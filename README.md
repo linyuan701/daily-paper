@@ -1,173 +1,70 @@
 # Daily Paper
 
-Daily literature triage centered on Zotero, with a profile pipeline and a persisted daily recommendation pipeline.
+Daily literature triage centered on Zotero, with a separate profile pipeline and a persisted daily recommendation pipeline.
+
+## Supported operation: cloud only
+
+**Daily Paper runs without a user computer supporting the service.** Since the 2026-09-19 decision, GitHub-hosted Actions is the execution environment for background jobs and CI. Windows/Local Mode installation, local SQLite storage, Zotero Desktop API, local schedulers, desktop notifications, and Obsidian filesystem workflows are retired. Remaining local code and old instructions are legacy material, not supported setup or recovery paths.
+
+The cloud services have distinct responsibilities:
+
+| Responsibility | Runtime / dependency |
+|---|---|
+| Source retrieval, enrichment, LLM labels/summaries, recall, rerank, notification | GitHub Actions: [daily.yml](.github/workflows/daily.yml), using external network APIs |
+| Zotero sync and manual profile maintenance | GitHub Actions: [profile.yml](.github/workflows/profile.yml), using Zotero Web API |
+| Durable library, profiles, recommendations, feedback, run/notification state | Managed PostgreSQL/Neon |
+| Authenticated dashboard and short read/write APIs | Cloudflare Worker + Cloudflare Access |
+| Optional Cron/retry dispatch | Worker dispatches the same GitHub daily workflow |
+| Tests, dependency audit, Worker build and preview | GitHub Actions: [ci.yml](.github/workflows/ci.yml), [cloudflare-preview.yml](.github/workflows/cloudflare-preview.yml) |
+
+GitHub executes the jobs; Cloudflare, PostgreSQL, Zotero, paper sources, LLM providers, and notification providers remain network services. Runner-local test databases, loopback smoke tests, and build artifacts are disposable CI resources and do not require an application on the user's computer.
 
 ## Project documentation
 
-Use these files instead of inferring project status from a workspace, branch, historical prompt, or draft pull request:
-
 - [Current integrated and production state](docs/PROJECT_STATE.md)
-- [Current integrated architecture](docs/ARCHITECTURE.md)
+- [Current architecture and retired local components](docs/ARCHITECTURE.md)
 - [Planned, in-development, and experimental work](docs/ROADMAP.md)
-- [Accepted decisions and rationale](docs/DECISIONS.md)
+- [Accepted decisions and rationale](docs/DECISIONS.md#dpo-011--cloud-only-operation-and-local-mode-retirement)
 
-The latest remote `origin/master` remains the authoritative integrated code baseline. README is the project entry point, not an independent completion or production-status ledger.
+The latest remote `origin/master` is the authoritative integrated code baseline. A draft PR is not integrated, and integrated code alone does not prove deployment or healthy production.
 
-## Stack
-- Next.js + TypeScript
-- Prisma with independent provider roots
-- SQLite for Local Mode and PostgreSQL/Neon for Cloud Mode; each has its own schema, generated client, and migration history
+## Configure and operate through the cloud
 
-## Local Setup
-1. Install dependencies:
-   - `npm install`
-2. Create `.env` from `.env.example`:
-   - required: `DATABASE_URL`, `ZOTERO_KEY`, `ZOTERO_ID`
-   - optional: source scopes, LLM/journal integration keys, scheduler settings
-   - `PUBMED_QUERY_SCOPE` defaults to a focused genomics/omics/regulatory-genomics query; generic AI terms are only included when paired with those domains, so override it only if you intentionally want broader PubMed intake
-3. Run schema and generate client:
-   - `npm run prisma:migrate`
-   - `npm run prisma:generate`
-4. Validate environment:
-   - `npm run check:env`
-5. Start app:
-   - `npm run dev`
-6. Health check:
-   - `GET http://localhost:3000/api/health`
+1. Configure managed PostgreSQL and a GitHub Actions environment named `production`. Store credentials in service Secrets, not a local `.env` or the repository.
+2. Set GitHub Secrets `DATABASE_URL`, `ZOTERO_ID`, `ZOTERO_KEY`, and the credential for the selected LLM provider. For DeepSeek, use `DEEPSEEK_API_KEY` with Variables `LLM_PROVIDER=deepseek`, `LLM_BASE_URL=https://api.deepseek.com`, and `LLM_MODEL=deepseek-v4-flash`. See the [Actions configuration runbook](docs/cloud-mode-a-github-actions.md) and [LLM configuration](docs/deepseek-official-llm.md).
+3. Configure source scopes, including `ARXIV_CATEGORY_SCOPES`, in the workflow's GitHub Environment Variables. `PUBMED_QUERY_SCOPE` has a focused genomics default in code; the workflow must explicitly forward any new configurable variable before it can affect a job.
+4. For a new database, run **Cloud profile maintenance** with `operation=sync`. Use the Access-protected `/collections` page to select at least one primary or secondary collection, then run `operation=refresh` for bootstrap validation. Daily execution also refreshes the profile before recall using already-synced library data and stored feedback; it does not sync Zotero each day.
+5. **Cloud daily recommendations** runs on the committed schedule (08:15 `Asia/Shanghai`; actual start can be delayed). Manual execution requires a strict UTC business date `runDate=YYYY-MM-DD`; follow the [guarded manual fallback](docs/production-daily-manual-fallback.md) to preserve idempotency.
+6. Configure optional WeCom or SMTP credentials in GitHub. Notifications follow persisted results; a delivery failure does not roll back the feed. View workflow results and the authenticated `/operations` page for warnings and retry eligibility.
 
-## End-to-End MVP Runbook
+The workflows explicitly use `DEPLOYMENT_MODE=cloud`, `ZOTERO_TRANSPORT=web`, `OBSIDIAN_ENABLED=false`, and `SCHEDULER_DESKTOP_NOTIFICATION_ENABLED=false`. They validate/generate the PostgreSQL client and deploy its migration history on the runner. Long jobs do not call the Worker daily/MVP APIs.
 
-### Preferred single-trigger path
-Use the integrated route:
-- `POST /api/jobs/mvp-flow`
-- optional body:
-  - `syncMode`: `"full"` or `"incremental"` (default `"incremental"`)
-  - `runDate`: `YYYY-MM-DD` (UTC day for ingestion)
-  - `sources`: subset of `["biorxiv","arxiv","pubmed","journal"]`
+## Dashboard and release boundary
 
-This orchestrates:
-1. Zotero sync
-2. collection priority read/effective summary
-3. manual profile refresh (new active snapshot)
-4. daily pipeline (ingest -> enrich -> dedup -> labels -> profile refresh -> recall -> rerank -> selected summaries)
-5. dashboard feed snapshot readback
+OpenNext runs the Next.js dashboard and short APIs in a Cloudflare Worker using the same PostgreSQL database. Cloudflare Access and application JWT checks protect the owner-only service. The Worker does not run migrations or the daily pipeline.
 
-### Manual route-by-route path
-1. Sync Zotero:
-   - `POST /api/zotero/sync` with `{ "mode": "incremental" }`
-2. Review/update collection priorities:
-   - `GET /api/zotero/collections/priorities`
-   - `PUT /api/zotero/collections/priorities`
-3. Refresh profile:
-   - `POST /api/profile/refresh`
-4. Ingest daily candidates (per source):
-   - `POST /api/ingestion/runs`
-5. Run ranking:
-   - `POST /api/ranking/recall`
-   - `POST /api/ranking/rerank`
-6. Open dashboard:
-   - `/`
-   - data API: `GET /api/recommendations/daily`
-7. Store user feedback and label edits:
-   - `POST /api/feedback/actions`
-   - `PUT /api/candidates/content`
+The [Worker preview workflow](.github/workflows/cloudflare-preview.yml) builds and smoke-tests on a GitHub-hosted Ubuntu runner without production credentials; it **does not deploy**. [PR #47](https://github.com/linyuan701/daily-paper/pull/47) proposes GitHub-operated production release/rollback, and [PR #45](https://github.com/linyuan701/daily-paper/pull/45) proposes a Site frontend; both are unmerged as of 2026-09-20. This architecture freeze does not deploy or integrate either implementation. The [Worker runbook](docs/cloud-mode-a-workers.md) records deployment requirements and this gap; a local Wrangler installation is not a supported operations dependency.
 
-## Scheduler Jobs
-- `POST /api/jobs/daily`: run daily recommendation pipeline
-- `POST /api/jobs/monthly-reminder`: profile-refresh reminder check
-- `POST /api/jobs/mvp-flow`: full local MVP orchestration
+The [recovery runbook](docs/production-backup-recovery.md) also retains historical workstation commands. GitHub-hosted export/restore automation and private encrypted storage still need a reviewed implementation; local backup tools are not a supported recovery dependency.
 
-CLI wrappers:
-- `npm run job:daily`
-- `npm run job:daily:cloud` (Cloud Mode direct Node job)
-- `npm run job:monthly-reminder`
-- `npm run job:scheduler-loop`
+## Validation and maintenance
 
-Scheduler env knobs:
-- `APP_BASE_URL`
-- `SCHEDULER_DAILY_UTC_HOUR`
-- `SCHEDULER_MONTHLY_UTC_DAY`
-- `SCHEDULER_MONTHLY_UTC_HOUR`
-- `SCHEDULER_POLL_MS`
+Use GitHub CI for the supported acceptance path: tests, TypeScript checks, secret scans, dependency audit, disposable PostgreSQL migration/repository checks, and Worker build/preview checks. Existing SQLite-based fixtures remain until a reviewed code cleanup removes them; they do not make SQLite a supported production database.
 
-## Cloud Mode daily execution
+## Known boundaries
 
-Cloud Mode keeps the Windows/SQLite path intact and runs the persisted daily pipeline directly in GitHub Actions against an empty managed PostgreSQL database. The committed workflow is `.github/workflows/daily.yml`; it does not call the Next.js or Cloudflare daily API.
+- External providers can fail; source/stage failures are recorded and partial runs may finish with warnings. No local fallback is supported.
+- The application is single-user; Cloudflare Access supplies the owner boundary rather than application tenancy.
+- Integrated recall is lexical/token overlap and reranking is explainable linear/semi-linear. BM25, dense embeddings, and hybrid retrieval are not integrated.
+- Local-mode defaults, schemas, scripts, and tests still exist in source. This support decision does not claim they have been deleted or change production by itself. User data and applied migration history remain protected.
+- Current production health and unverified deployments are recorded only in [project state](docs/PROJECT_STATE.md).
 
-Setup summary:
+## Directory highlights
 
-1. Create a Neon database in a region near the instance owner. The first personal instance uses AWS Frankfurt (`eu-central-1`), but no provider region is hardcoded.
-2. Create a GitHub Actions environment named `production`.
-3. Add required secrets: `DATABASE_URL`, `ZOTERO_ID`, `ZOTERO_KEY`, and the manually created DeepSeek secret `DEEPSEEK_API_KEY`.
-4. Add `LLM_PROVIDER=deepseek`, `LLM_BASE_URL=https://api.deepseek.com`, and `LLM_MODEL=deepseek-v4-flash` as GitHub Environment Variables. Notification settings remain optional.
-5. Run **Cloud daily recommendations** manually once with the required strict `runDate` (`YYYY-MM-DD`). For production fallback, follow the [guarded manual procedure](docs/production-daily-manual-fallback.md).
-6. Keep or edit the template schedule, which defaults to 08:15 `Asia/Shanghai` (UTC 00:15).
-
-The workflow validates/generates the PostgreSQL client, applies the independent cloud migration history, and then invokes the existing `job:daily:cloud` CLI. Notification settings are optional; failures do not roll back persisted results. See [Cloud Mode A GitHub Actions runbook](docs/cloud-mode-a-github-actions.md) for the full Secrets/Variables, schedule, retry, and exit-code contract, and [DeepSeek official generative LLM configuration](docs/deepseek-official-llm.md) for provider setup and isolated smoke testing.
-
-For a controlled provider rollback to NVIDIA NIM, set `LLM_PROVIDER=nvidia`, restore the NVIDIA base/model Variables, and retain `NVIDIA_API_KEY`. The legacy generic `openai-compatible` provider also remains available through `LLM_API_KEY`. The deprecated `LLM_API_BASE_URL` Variable remains a fallback when `LLM_BASE_URL` is unset.
-
-An empty Cloud Mode database must sync Zotero and select at least one primary or secondary collection before recall can succeed. Use the separate **Cloud profile maintenance** workflow with `operation=sync`, then use the Access-protected `/collections` page to set priorities. A manual `operation=refresh` remains useful for bootstrap validation; the integrated daily pipeline also refreshes the profile immediately before recall. The profile workflow is manual-only and does not run the daily pipeline.
-
-## Cloud Mode dashboard on Cloudflare Workers
-
-OpenNext can deploy the dashboard and short interactive APIs to Cloudflare Workers. The Worker reads the same Neon database but never runs migrations or the daily pipeline.
-
-```text
-npm run cf:typegen
-npm run cf:build
-npm run test:cloudflare
-npm run cf:preview
-npm run cf:deploy
-```
-
-Before deployment, add `DATABASE_URL` as a Worker secret and enable Cloudflare Access on the production `daily-paper.<account-subdomain>.workers.dev` route. The committed Wrangler config enables only the production `workers.dev` URL; preview URLs remain disabled. The Worker also validates the Access JWT issuer, audience, signature, and configured owner email. Only `/api/health/live` may receive an exact public Access exception; readiness and every dashboard/API route remain protected. A later custom domain changes routing and Access configuration, not application or database code. See [Workers deployment](docs/cloud-mode-a-workers.md), the [original dependency audit](docs/cloud-mode-a-dependency-audit.md), and the [v0.2 dependency risk register](docs/production-dependency-risk.md).
-
-The Access-protected `/operations` page and `/api/operations/runs` show recent persisted daily runs, stage outcomes, source degradation, timestamps, sanitized errors, and retry eligibility. Optional retry/resume dispatch requires `OPERATIONS_GITHUB_OWNER`, `OPERATIONS_GITHUB_REPO`, `OPERATIONS_GITHUB_REF`, and the Worker secret `OPERATIONS_GITHUB_TOKEN`. Use a fine-grained token restricted to this repository with Actions write permission. The API accepts only a stored retryable `runId`, checks its fixed daily request key, and dispatches the fixed `daily.yml` with the stored `runDate`; it cannot execute shell commands, delete history, or create a different idempotency key.
-
-## Validation Commands
-- tests: `npm run test`
-- typecheck: `npm run typecheck`
-- production build: `npm run build`
-- OpenNext Worker build: `npm run cf:build`
-- Scheduler reliability and manual secret setup: `docs/scheduler-reliability.md`
-- Cloudflare generated-artifact contract: `npm run test:cloudflare` (run after `cf:build`)
-
-If `next build` fails in Windows sandboxed environments with `EPERM ... Application Data`, run build with an isolated home/profile:
-
-```powershell
-$root=(Resolve-Path .).Path
-$fakeHome=Join-Path $root '.codex-home'
-$fakeAppData=Join-Path $fakeHome 'AppData\Roaming'
-$fakeLocal=Join-Path $fakeHome 'AppData\Local'
-New-Item -ItemType Directory -Force -Path $fakeAppData,$fakeLocal | Out-Null
-$env:HOME=$fakeHome
-$env:USERPROFILE=$fakeHome
-$env:HOMEDRIVE=$fakeHome.Substring(0,2)
-$env:HOMEPATH=$fakeHome.Substring(2)
-$env:APPDATA=$fakeAppData
-$env:LOCALAPPDATA=$fakeLocal
-npm run build
-```
-
-## Known Limitations
-- External integrations depend on real credentials/network (`ZOTERO_KEY`, source APIs, optional LLM/enrichment APIs).
-- Providers are honest about unavailability; they degrade gracefully and record failure metadata.
-- Aggregate daily ingestion fetches configured sources concurrently and can continue with explicit partial-source warnings.
-- The application remains single-user and has no application-level tenant partitioning; Cloud Mode relies on owner-scoped Cloudflare Access at the edge.
-- Integrated recall is lexical/token-overlap based and reranking remains explainable linear/semi-linear; BM25, dense embeddings, and hybrid retrieval are not integrated.
-- Current production health and evidence gaps are maintained only in `docs/PROJECT_STATE.md`.
-
-## Extension Points
-- Extend Local or Cloud persistence while preserving their independent Prisma schemas and migration histories.
-- Add or replace source, enrichment, and LLM providers behind the existing provider contracts.
-- Add richer source scopes and additional ingestion adapters.
-- Evaluate retrieval or feedback changes through an approved roadmap item before changing ranking semantics.
-
-## Directory Highlights
-- `src/app`: pages and thin API handlers
-- `src/modules`: business modules (`zotero-sync`, `collections`, `profile-build`, `ingestion`, `ranking`, `feedback`, `scheduler`)
-- `src/db/repositories`: Prisma-backed repository layer
-- `src/lib`: config, logging, errors, shared utilities/types
-- `prisma/schema.prisma`: Local Mode SQLite schema
-- `prisma/postgresql/schema.prisma`: Cloud Mode PostgreSQL schema
+- `src/app`: dashboard and thin API handlers
+- `src/modules`: profile, ingestion, ranking, feedback, and daily orchestration
+- `src/db`: repositories and cloud database clients
+- `src/lib`: configuration, logging, errors, and shared types
+- `prisma/postgresql`: supported PostgreSQL schema and migration history
+- `.github/workflows`: background operations and CI
+- `prisma/schema.prisma`, `prisma/migrations`, local-only scripts: retained legacy code; see the [retirement inventory](docs/ARCHITECTURE.md#retired-local-components)

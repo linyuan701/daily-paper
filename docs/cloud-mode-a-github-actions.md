@@ -2,9 +2,11 @@
 
 > **Classification: operational reference.** Dated acceptance statements below are historical and do not describe current production health. See `docs/PROJECT_STATE.md` for verified current evidence.
 
-## Real acceptance status
+> **Supported scope (2026-09-19, DPO-011):** GitHub-hosted Actions and network services are the only supported background execution path. No local installation, SQLite database, Zotero Desktop, or local scheduler is required. See [architecture](ARCHITECTURE.md#cloud-execution-boundary).
 
-This checkout has no configured Git remote and no GitHub or Neon credentials. The workflow has therefore not been manually dispatched against Neon. Real ingestion, persisted stages/recommendations/summaries, same-date `already_succeeded`, database uniqueness, and remote log redaction are not claimed as accepted.
+## Historical initial acceptance note
+
+At the initial implementation checkpoint, the checkout had no configured Git remote or GitHub/Neon credentials, so live acceptance was not performed then. This historical note does not describe current production; use `PROJECT_STATE.md` for inspected runs.
 
 When credentials are available, dispatch the workflow twice with the same explicit `runDate`. Verify migrations and the first pipeline result, inspect non-secret database counts, verify the second result is `already_succeeded` with no duplicate run/recommendations, confirm unset notifications are skipped, and inspect logs for all secret values. Record only date, run ID, statuses, and counts here.
 
@@ -12,7 +14,7 @@ Cloud Mode runs the existing persisted daily CLI on a standard GitHub-hosted Nod
 
 ## Empty-database profile bootstrap
 
-The daily pipeline intentionally does not rebuild the low-frequency interest profile. For a new empty Neon database:
+Zotero synchronization remains a separate low-frequency operation. The daily pipeline refreshes the profile before recall using the already-synced library and stored feedback; it does not sync Zotero. For a new empty Neon database:
 
 1. Run **Cloud profile maintenance** with `operation=sync`. The first incremental request automatically performs the existing full Zotero sync because no successful library version exists.
 2. Deploy and sign in to the Access-protected Dashboard, open `/collections`, and mark at least one collection as `primary` or `secondary`. The root default remains `excluded`.
@@ -88,12 +90,13 @@ checkout -> Node 22 -> npm ci -> cloud config check
 -> PostgreSQL validate/generate -> migrate deploy -> job:daily:cloud
 ```
 
-The CLI may also be invoked locally against an explicitly configured Cloud environment:
+The GitHub runner invokes the CLI after workflow guards and cloud configuration checks:
 
 ```text
-npm run job:daily:cloud
-npm run job:daily:cloud -- --run-date 2026-07-27
+npm run job:daily:cloud -- --run-date "$RUN_DATE"
 ```
+
+Operators use GitHub Actions `workflow_dispatch` with the approved UTC date rather than running this command from a user PC. Direct local production execution is retired under DPO-011 and would bypass workflow-level controls.
 
 The database request key and stage rows, not Actions concurrency, provide business idempotency. A successful run is reused, an active lease is not stolen, a stale lease is reclaimed on the same `runId`, and a downstream failure resumes after successful ingestion. Retry a failed workflow with **Re-run jobs** or use `workflow_dispatch` with the same date.
 

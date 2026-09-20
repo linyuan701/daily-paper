@@ -2,6 +2,8 @@
 
 > Acceptance closure: UTC business date `2026-07-30` completed successfully. Do not dispatch or restore that date again. The commands below are retained as the audited acceptance record and must be updated to a new approved business date before any future use.
 
+> **Cloud-only operation (DPO-011):** Use the GitHub Actions web interface for manual dispatch and log inspection. The dated PowerShell/`gh` transcript below is historical evidence, not a requirement to install a local CLI or run a local scheduler. Apply the same active-run checks, approved UTC date, and persisted idempotency rules through GitHub.
+
 This runbook is for a delayed GitHub scheduled run only. It never accepts a caller-supplied `runId`; the persisted daily pipeline derives and reuses the business run from the UTC business date and the fixed production source set.
 
 ## One-time protection before acceptance
