@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { verifyCloudflareAccess } from "./lib/http/cloudflare-access";
+import { isSiteDashboardRead, verifyCloudflareAccess, verifySiteDashboardAccess } from "./lib/http/cloudflare-access";
 
 export async function middleware(request: NextRequest) {
   if (
@@ -10,7 +10,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const access = await verifyCloudflareAccess(request);
+  const access = await (isSiteDashboardRead(request)
+    ? verifySiteDashboardAccess(request)
+    : verifyCloudflareAccess(request));
   if (!access.ok) {
     return NextResponse.json(
       {

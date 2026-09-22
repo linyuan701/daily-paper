@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ verify: vi.fn() }));
 
 vi.mock("./lib/http/cloudflare-access", () => ({
-  verifyCloudflareAccess: mocks.verify
+  verifyCloudflareAccess: mocks.verify,
+  verifySiteDashboardAccess: mocks.verify,
+  isSiteDashboardRead: (request: Request) => request.method === "GET" && new URL(request.url).pathname === "/api/site/dashboard"
 }));
 
 import { middleware } from "./middleware";

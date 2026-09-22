@@ -8,13 +8,19 @@ await waitForLiveness();
 await expectJson("/api/health/live", { status: 200, code: undefined });
 await expectJson("/", { status: 403, code: "ACCESS_TOKEN_REQUIRED" });
 await expectJson("/api/health/ready", { status: 403, code: "ACCESS_TOKEN_REQUIRED" });
+await expectJson("/api/site/dashboard", { status: 403, code: "ACCESS_TOKEN_REQUIRED" });
+await expectJson("/api/site/dashboard", {
+  status: 403, code: "ACCESS_TOKEN_REQUIRED",
+  headers: { "CF-Access-Client-Id": "fixture-client", "CF-Access-Client-Secret": "fixture-secret" }
+});
+await expectJson("/api/recommendations/daily", { status: 403, code: "ACCESS_TOKEN_REQUIRED" });
 await expectJson("/api/jobs/daily", {
   method: "POST",
   status: 403,
   code: "ACCESS_TOKEN_REQUIRED"
 });
 
-console.log(JSON.stringify({ status: "ok", runtime: "workerd", checks: 4 }));
+console.log(JSON.stringify({ status: "ok", runtime: "workerd", checks: 7 }));
 
 async function waitForLiveness() {
   let lastError;
