@@ -128,14 +128,16 @@ export function healthProbe(env, request = fetch) {
       base.pathname !== "/" || !/^daily-paper\.[a-z0-9-]+\.workers\.dev$/.test(base.hostname)) {
     fail("INVALID_PRODUCTION_ORIGIN");
   }
-  const path = env.WORKER_CRITICAL_API_PATH || "/api/recommendations/daily";
-  if (!["/api/recommendations/daily", "/api/site/dashboard"].includes(path)) fail("CRITICAL_API_NOT_ALLOWLISTED");
+  const path = env.WORKER_CRITICAL_API_PATH || "/api/site/dashboard";
+  // The same scoped identity must read Site and be denied the broader API.
+  if (path !== "/api/site/dashboard") fail("SCOPED_SITE_CRITICAL_API_REQUIRED");
+  const deniedPath = "/api/recommendations/daily";
   if (!env.WORKER_ACCESS_CLIENT_ID || !env.WORKER_ACCESS_CLIENT_SECRET) fail("EXISTING_ACCESS_CREDENTIALS_REQUIRED");
   return async () => {
     const checks = [];
-    for (const endpoint of ["/api/health/live", path]) {
+    for (const endpoint of ["/api/health/live", path, deniedPath]) {
       const headers = { "Cache-Control": "no-cache" };
-      if (endpoint === path) {
+      if (endpoint !== "/api/health/live") {
         headers["CF-Access-Client-Id"] = env.WORKER_ACCESS_CLIENT_ID;
         headers["CF-Access-Client-Secret"] = env.WORKER_ACCESS_CLIENT_SECRET;
       }
@@ -145,14 +147,31 @@ export function healthProbe(env, request = fetch) {
           method: "GET", headers, redirect: "manual", signal: AbortSignal.timeout(30_000)
         });
       } catch { fail("HEALTH_REQUEST_FAILED"); }
+      if (endpoint === deniedPath) {
+        // A random error or redirect is not proof of Access denial. Never follow
+        // Location (or retain its query, which can contain Access metadata).
+        let login;
+        try { login = new URL(response.headers.get("location")); }
+        catch { fail("NEGATIVE_API_NOT_DENIED"); }
+        if (response.status !== 302 || login.protocol !== "https:" ||
+            login.username || login.password || login.port || login.hash ||
+            !/^[a-z0-9-]+\.cloudflareaccess\.com$/.test(login.hostname) ||
+            login.pathname !== `/cdn-cgi/access/login/${base.hostname}` ||
+            login.searchParams.getAll("redirect_url").length !== 1 ||
+            login.searchParams.get("redirect_url") !== deniedPath) {
+          fail("NEGATIVE_API_NOT_DENIED");
+        }
+        checks.push({ path: endpoint, status: 302, outcome: "access_denied",
+          denial: "cloudflare_access_login_redirect", checked_at: new Date().toISOString() });
+        continue;
+      }
       if (response.status !== 200 || !response.headers.get("content-type")?.includes("application/json")) {
         fail(endpoint === path ? "CRITICAL_API_FAILED" : "LIVENESS_FAILED");
       }
       let payload;
       try { payload = await response.json(); } catch { fail("HEALTH_INVALID_JSON"); }
       if (endpoint === "/api/health/live" && payload.status !== "ok") fail("LIVENESS_INVALID_BODY");
-      if (endpoint === "/api/recommendations/daily" && (payload.status !== "ok" || !payload.feed)) fail("CRITICAL_API_INVALID_BODY");
-      if (endpoint === "/api/site/dashboard" && payload.schemaVersion !== 1) fail("CRITICAL_API_INVALID_BODY");
+      if (endpoint === "/api/site/dashboard" && payload?.schemaVersion !== 1) fail("CRITICAL_API_INVALID_BODY");
       checks.push({ path: endpoint, status: 200, checked_at: new Date().toISOString() });
     }
     return checks; // Never retain private API response bodies.

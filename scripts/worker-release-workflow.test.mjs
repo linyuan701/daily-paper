@@ -59,6 +59,20 @@ test("rollback requires version, historical and current deployment, no install/b
   assert.doesNotMatch(rollback, /run:.*(?:npm|npx|wrangler|build|upload)/);
 });
 
+test("both production workflows supply the same scoped Access pair to the shared health probe", () => {
+  for (const workflow of [deploy, rollback]) {
+    assert.match(workflow, /environment: production/);
+    assert.match(workflow, /WORKER_ACCESS_CLIENT_ID: \$\{\{ secrets\.WORKER_ACCESS_CLIENT_ID \}\}/);
+    assert.match(workflow, /WORKER_ACCESS_CLIENT_SECRET: \$\{\{ secrets\.WORKER_ACCESS_CLIENT_SECRET \}\}/);
+    assert.match(workflow, /WORKER_CRITICAL_API_PATH: \$\{\{ vars\.WORKER_CRITICAL_API_PATH \}\}/);
+    assert.match(workflow, /run: node scripts\/worker-release\.mjs/);
+    assert.doesNotMatch(workflow, /NEGATIVE_API.*(?:SECRET|TOKEN)|SKIP.*(?:PROBE|HEALTH)/);
+  }
+  assert.match(controller, /probe: healthProbe\(env\)/);
+  assert.match(controller, /evidence\.postflight_checks = await probe\(\)/);
+  assert.match(controller, /evidence\.recovery_checks = await probe\(\)/);
+});
+
 test("controller does not force rollback, change secrets/triggers, log raw output or call business jobs", () => {
   assert.doesNotMatch(controller, /force=true|secret put|secret bulk|triggers deploy|cf:deploy|prisma|workflow_dispatch.*fetch/);
   assert.match(controller, /"versions", "upload"/);

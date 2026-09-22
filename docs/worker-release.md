@@ -39,14 +39,45 @@ PR, command argument, workflow input, artifact, issue, log or this document.
 | Secret | `WORKER_ACCESS_CLIENT_ID` | Existing Access service credential already allowed for the selected critical read |
 | Secret | `WORKER_ACCESS_CLIENT_SECRET` | Matching existing Access credential |
 | Variable | `WORKER_BASE_URL` | Existing HTTPS `daily-paper.<subdomain>.workers.dev` origin |
-| Variable | `WORKER_CRITICAL_API_PATH` | Exact `/api/recommendations/daily` or `/api/site/dashboard`; defaults to recommendations |
+| Variable | `WORKER_CRITICAL_API_PATH` | Must be `/api/site/dashboard`; also the default when unset |
 
-The current old Site credential is limited to `GET /api/site/dashboard`; select
-that path if reusing it. A generic Access service token does not necessarily pass
+The existing Site credential is limited to `GET /api/site/dashboard`. The health
+probe requires this scoped identity; other critical paths fail configuration
+validation so the negative check cannot be skipped or used as a positive check.
+A generic Access service token does not necessarily pass
 the Worker's application-level authorization. No policy or API permission change
 is performed by this release system. If the existing credential cannot complete
 the selected read, the operation fails before upload/deployment. No Worker secret
 values or database credentials are required in the release job.
+
+### Scoped health contract
+
+Deploy, rollback, their preflight checks, rollback dry-run and guarded recovery
+share one GET-only probe. Redirects are never followed:
+
+| Endpoint | Credentials | Required response |
+|---|---|---|
+| `/api/health/live` | None | HTTP 200 JSON with `status="ok"` |
+| `/api/site/dashboard` | Existing `WORKER_ACCESS_CLIENT_ID/SECRET` | HTTP 200 JSON with numeric `schemaVersion=1` |
+| `/api/recommendations/daily` | The exact same pair | HTTP 302 to the Cloudflare Access login contract below |
+
+Denial requires an absolute HTTPS Location on a `*.cloudflareaccess.com` team
+host, exact path `/cdn-cgi/access/login/<Worker hostname>`, and exactly one
+`redirect_url` equal to `/api/recommendations/daily`. URL credentials, non-default
+ports and fragments are refused. A 200, bare 401/403, 404, 5xx, network failure,
+missing Location or unrelated redirect fails the probe. No credentials are sent
+to the redirect target. Evidence stores only path/status/time and the fixed
+`access_denied` / `cloudflare_access_login_redirect` classification, never the
+Location query, cookies or private response body. A policy response change needs
+review rather than accepting arbitrary non-200 responses.
+
+The login redirect shape was re-observed anonymously on 2026-09-22. The earlier
+[production rollback dry-run](https://github.com/linyuan701/daily-paper/actions/runs/35544004794)
+proved the GitHub production credential's positive Site read, not its negative
+scope. Production permits only master, so the new same-credential negative probe
+cannot be exercised by an unmerged Draft. After integration, a new rollback
+`dry_run=true` can verify both reads without creating a version or switching
+traffic. Secret-free CI and mocked dry-runs do not substitute for that live check.
 
 PR #46's dependency security repair and PR #44's cloud-only support decision are
 merged in master `fca4dc7a51d6d737869648bbf50180e5f396a802`. The release
@@ -94,7 +125,7 @@ be established safely, leave production unchanged and report the evidence gap.
    state must match. Only GET requests are made to application endpoints.
 7. A failed switch/probe attempts recovery to the saved prior version, without
    rebuilding and without overriding a concurrent deployment. Recovery also
-   verifies traffic and both reads. The run stays failed even when recovery
+   verifies traffic and all three probes. The run stays failed even when recovery
    succeeds. Never equate a failed run with an unchanged deployment: inspect the
    final `active` evidence and any recovery failure.
 

@@ -236,22 +236,164 @@ test("provider API client allows only reads and deployment POSTs and does not le
   assert.equal(calls[0].options.redirect, "error");
 });
 
-test("health probes are GET-only, refuse redirects and never retain response bodies", async () => {
-  const env = { WORKER_BASE_URL: "https://daily-paper.example.workers.dev", WORKER_ACCESS_CLIENT_ID: "id",
-    WORKER_ACCESS_CLIENT_SECRET: "secret", WORKER_CRITICAL_API_PATH: "/api/recommendations/daily" };
+const probeEnv = {
+  WORKER_BASE_URL: "https://daily-paper.example.workers.dev",
+  WORKER_ACCESS_CLIENT_ID: "fixture-client-id", WORKER_ACCESS_CLIENT_SECRET: "fixture-client-secret",
+  WORKER_CRITICAL_API_PATH: "/api/site/dashboard"
+};
+const deniedPath = "/api/recommendations/daily";
+const accessLogin = "https://team.cloudflareaccess.com/cdn-cgi/access/login/daily-paper.example.workers.dev";
+const denialLocation = accessLogin + "?kid=fixture-aud&meta=private-access-metadata&redirect_url=" + encodeURIComponent(deniedPath);
+function probeResponse(url) {
+  if (url.pathname === deniedPath) return new Response(null, { status: 302, headers: { Location: denialLocation } });
+  return Response.json(url.pathname.endsWith("live") ? { status: "ok" } : { schemaVersion: 1, private: "private-body" });
+}
+
+test("scoped probes use the same credential for both APIs, never follow redirects or retain private data", async () => {
   const calls = [];
-  const check = healthProbe(env, async (url, options) => {
+  const result = await healthProbe(probeEnv, async (url, options) => {
     calls.push({ url, options });
-    return Response.json(url.pathname.endsWith("live") ? { status: "ok" } : { status: "ok", feed: { private: "value" } });
-  });
-  const result = await check();
-  assert.doesNotMatch(JSON.stringify(result), /private|secret|value/);
-  assert.ok(calls.every(({ options }) => options.method === "GET" && options.redirect === "manual"));
-  assert.equal(calls[0].options.headers["CF-Access-Client-Secret"], undefined);
-  assert.equal(calls[1].options.headers["CF-Access-Client-Secret"], "secret");
-  assert.throws(() => healthProbe({ ...env, WORKER_CRITICAL_API_PATH: "/api/jobs/daily" }), /NOT_ALLOWLISTED/);
-  assert.throws(() => healthProbe({ ...env, WORKER_BASE_URL: "https://attacker.invalid" }), /INVALID_PRODUCTION_ORIGIN/);
-  await assert.rejects(healthProbe(env, async () => new Response("", { status: 302 }))(), /LIVENESS_FAILED/);
+    return probeResponse(url);
+  })();
+  assert.deepEqual(calls.map(({ url }) => url.pathname), ["/api/health/live", "/api/site/dashboard", deniedPath]);
+  assert.ok(calls.every(({ url, options }) => url.origin === probeEnv.WORKER_BASE_URL &&
+    options.method === "GET" && options.redirect === "manual" && options.body === undefined));
+  for (const header of ["CF-Access-Client-Id", "CF-Access-Client-Secret"]) {
+    assert.equal(calls[0].options.headers[header], undefined);
+    assert.equal(calls[1].options.headers[header], calls[2].options.headers[header]);
+  }
+  assert.equal(calls[1].options.headers["CF-Access-Client-Id"], probeEnv.WORKER_ACCESS_CLIENT_ID);
+  assert.equal(calls[1].options.headers["CF-Access-Client-Secret"], probeEnv.WORKER_ACCESS_CLIENT_SECRET);
+  assert.deepEqual(result.map(({ path, status, outcome, denial }) => ({ path, status, outcome, denial })), [
+    { path: "/api/health/live", status: 200, outcome: undefined, denial: undefined },
+    { path: "/api/site/dashboard", status: 200, outcome: undefined, denial: undefined },
+    { path: deniedPath, status: 302, outcome: "access_denied", denial: "cloudflare_access_login_redirect" }
+  ]);
+  assert.ok(result.every(({ checked_at }) => Number.isFinite(Date.parse(checked_at))));
+  assert.doesNotMatch(JSON.stringify(result), /private|fixture-client|Location|redirect_url|cloudflareaccess\.com/);
+});
+
+test("the Site positive probe is mandatory and defaults to Site, never the denied API", async () => {
+  const calls = [];
+  await healthProbe({ ...probeEnv, WORKER_CRITICAL_API_PATH: undefined }, async (url) => {
+    calls.push(url.pathname);
+    return probeResponse(url);
+  })();
+  assert.deepEqual(calls, ["/api/health/live", "/api/site/dashboard", deniedPath]);
+  for (const path of [deniedPath, "/api/jobs/daily"]) {
+    assert.throws(() => healthProbe({ ...probeEnv, WORKER_CRITICAL_API_PATH: path }), /SCOPED_SITE_CRITICAL_API_REQUIRED/);
+  }
+  for (const name of ["WORKER_ACCESS_CLIENT_ID", "WORKER_ACCESS_CLIENT_SECRET"]) {
+    assert.throws(() => healthProbe({ ...probeEnv, [name]: "" }), /EXISTING_ACCESS_CREDENTIALS_REQUIRED/);
+  }
+  assert.throws(() => healthProbe({ ...probeEnv, WORKER_BASE_URL: "https://attacker.invalid" }), /INVALID_PRODUCTION_ORIGIN/);
+  await assert.rejects(healthProbe(probeEnv, async () => new Response(null, { status: 302 }))(), /LIVENESS_FAILED/);
+});
+
+test("Site still requires HTTP 200 JSON and schemaVersion exactly 1", async () => {
+  for (const response of [
+    new Response(null, { status: 302, headers: { Location: denialLocation } }),
+    new Response("private-error-body", { status: 500 }),
+    new Response("<html>login</html>", { status: 200, headers: { "content-type": "text/html" } }),
+    Response.json({ schemaVersion: 2 }), Response.json({ schemaVersion: "1" }), Response.json({}), Response.json(null),
+    new Response("not json", { headers: { "content-type": "application/json" } })
+  ]) {
+    const calls = [];
+    await assert.rejects(healthProbe(probeEnv, async (url) => {
+      calls.push(url.pathname);
+      return url.pathname === "/api/site/dashboard" ? response : probeResponse(url);
+    })(), /CRITICAL_API_FAILED|CRITICAL_API_INVALID_BODY|HEALTH_INVALID_JSON/);
+    assert.deepEqual(calls, ["/api/health/live", "/api/site/dashboard"]);
+  }
+});
+
+test("denial rejects successful access, errors and other status codes even with a valid Access Location", async () => {
+  for (const status of [200, 201, 204, 301, 303, 307, 308, 401, 403, 404, 429, 500, 503]) {
+    await assert.rejects(healthProbe(probeEnv, async (url) => url.pathname === deniedPath
+      ? new Response(null, { status, headers: { Location: denialLocation } }) : probeResponse(url))(),
+    { message: "NEGATIVE_API_NOT_DENIED" }, `status ${status} must not satisfy the observed 302 contract`);
+  }
+});
+
+test("a denial must redirect to HTTPS Cloudflare Access login for this Worker and exact denied path", async () => {
+  for (const location of [
+    null, "/login", "not-a-url",
+    denialLocation.replace("https:", "http:"),
+    denialLocation.replace("team.cloudflareaccess.com", "attacker.invalid"),
+    denialLocation.replace("team.cloudflareaccess.com", "team.cloudflareaccess.com.attacker.invalid"),
+    denialLocation.replace("team.cloudflareaccess.com", "team.cloudflareaccess.com:8443"),
+    denialLocation.replace("https://", "https://private:password@"),
+    denialLocation + "#fragment",
+    denialLocation.replace("/cdn-cgi/access/login/", "/login/"),
+    denialLocation.replace("daily-paper.example.workers.dev", "another-worker.example.workers.dev"),
+    accessLogin, accessLogin + "?redirect_url=/api/site/dashboard",
+    accessLogin + "?redirect_url=https://attacker.invalid" + deniedPath,
+    denialLocation + "&redirect_url=" + encodeURIComponent(deniedPath)
+  ]) {
+    await assert.rejects(healthProbe(probeEnv, async (url) => url.pathname === deniedPath
+      ? new Response(null, { status: 302, headers: location === null ? {} : { Location: location } })
+      : probeResponse(url))(), { message: "NEGATIVE_API_NOT_DENIED" });
+  }
+});
+
+test("negative-probe transport failures fail closed without exposing credentials or response bodies", async () => {
+  await assert.rejects(healthProbe(probeEnv, async (url) => {
+    if (url.pathname === deniedPath) throw new Error("private-client-secret and private-response");
+    return probeResponse(url);
+  })(), { message: "HEALTH_REQUEST_FAILED" });
+  await assert.rejects(healthProbe(probeEnv, async (url) => url.pathname === deniedPath
+    ? { status: 200, headers: new Headers(), json: () => assert.fail("must not read private denied-API data") }
+    : probeResponse(url))(), { message: "NEGATIVE_API_NOT_DENIED" });
+});
+
+test("read-only inspect and rollback dry-run retain both scoped probes and never upload or switch", async () => {
+  for (const mode of ["inspect", "rollback"]) {
+    const f = fixture(mode);
+    f.input.dryRun = true;
+    f.deps.probe = healthProbe(probeEnv, probeResponse);
+    f.deps.upload = async () => assert.fail("dry-run cannot upload");
+    const result = await executeRelease(f.input, f.deps);
+    assert.equal(result.status, "read_only_verified");
+    assert.equal(result.preflight_checks[1].path, "/api/site/dashboard");
+    assert.equal(result.preflight_checks[2].outcome, "access_denied");
+    assert.equal(result.active.id, oldDeployment);
+    assert.equal(f.writes.length, 0);
+  }
+});
+
+test("successful deploy and rollback evidence includes the same negative check after the switch", async () => {
+  for (const mode of ["deploy", "rollback"]) {
+    const f = fixture(mode);
+    f.deps.probe = healthProbe(probeEnv, probeResponse);
+    const result = await executeRelease(f.input, f.deps);
+    assert.equal(result.status, "verified");
+    assert.equal(result.postflight_checks.at(-1).outcome, "access_denied");
+  }
+});
+
+test("post-switch scope leaks fail deploy and rollback and are checked again during guarded recovery", async () => {
+  for (const mode of ["deploy", "rollback"]) {
+    const f = fixture(mode);
+    if (mode === "rollback") {
+      f.setActive(deployment(oldDeployment, newVersion));
+      f.input.historicalDeployment = recoveryDeployment;
+      const originalCf = f.deps.cf;
+      f.deps.cf = async (path, body) => path === `/deployments/${recoveryDeployment}`
+        ? deployment(recoveryDeployment, oldVersion) : originalCf(path, body);
+    }
+    let negativeChecks = 0;
+    f.deps.probe = healthProbe(probeEnv, async (url) => {
+      if (url.pathname === deniedPath && ++negativeChecks === 2) return Response.json({ private: "unexpected-access" });
+      return probeResponse(url);
+    });
+    await assert.rejects(executeRelease(f.input, f.deps), /NEGATIVE_API_NOT_DENIED/);
+    assert.equal(negativeChecks, 3);
+    assert.deepEqual(f.writes.map((body) => body.versions[0].version_id),
+      mode === "deploy" ? [newVersion, oldVersion] : [oldVersion, newVersion]);
+    assert.equal(f.saves.at(-1).status, "failed");
+    assert.equal(f.saves.at(-1).recovery_checks.at(-1).outcome, "access_denied");
+    assert.doesNotMatch(JSON.stringify(f.saves), /unexpected-access|private-access-metadata|fixture-client/);
+  }
 });
 
 test("annotation claims stay separate from SHA attestation and redact arbitrary text", () => {
