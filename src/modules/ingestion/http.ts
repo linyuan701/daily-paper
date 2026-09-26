@@ -7,16 +7,28 @@ export type FetchWithRetryOptions = {
   retryAfterCapMs?: number;
   classifyFailures?: boolean;
   wait?: (milliseconds: number) => Promise<void>;
+  scheduleAttempt?: <T>(request: () => Promise<T>) => Promise<T>;
+  onAttempt?: (diagnostic: SourceHttpAttemptDiagnostic) => void;
 };
 
 export type SourceHttpFailureKind = "timeout" | "network";
+
+export type SourceHttpAttemptDiagnostic = {
+  attempt: number;
+  elapsedMs: number;
+  requestPhase: "headers" | "body";
+  outcome: "http" | SourceHttpFailureKind;
+  httpStatus?: number;
+  transportCode?: string;
+};
 
 export class SourceHttpError extends Error {
   constructor(
     readonly kind: SourceHttpFailureKind,
     message: string,
     readonly attempts: number,
-    cause?: unknown
+    cause?: unknown,
+    readonly diagnostic?: SourceHttpAttemptDiagnostic
   ) {
     super(message, { cause });
     this.name = "SourceHttpError";
@@ -34,6 +46,24 @@ export async function fetchWithRetry(
   init?: RequestInit,
   options?: FetchWithRetryOptions
 ): Promise<Response> {
+  return (await fetchResultWithRetry(input, init, options, false)).response;
+}
+
+/** Read the body inside the attempt deadline and connection slot, unlike a raw Response. */
+export async function fetchTextWithRetry(
+  input: string,
+  init?: RequestInit,
+  options?: FetchWithRetryOptions
+): Promise<{ response: Response; text: string }> {
+  return fetchResultWithRetry(input, init, options, true);
+}
+
+async function fetchResultWithRetry(
+  input: string,
+  init: RequestInit | undefined,
+  options: FetchWithRetryOptions | undefined,
+  readText: boolean
+): Promise<{ response: Response; text: string }> {
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxRetries = options?.maxRetries ?? DEFAULT_MAX_RETRIES;
   const retryableStatusCodes = options?.retryableStatusCodes ?? DEFAULT_RETRYABLE_STATUS_CODES;
@@ -46,28 +76,72 @@ export async function fetchWithRetry(
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-    let response: Response;
+    let result: { response: Response; text: string };
+    let diagnostic: SourceHttpAttemptDiagnostic | undefined;
+    const request = async () => {
+      const controller = new AbortController();
+      const startedAt = Date.now();
+      let requestPhase: "headers" | "body" = "headers";
+      let response: Response | undefined;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const deadline = new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => {
+            controller.abort();
+            reject(new DOMException("Source request timed out", "AbortError"));
+          }, timeoutMs);
+        });
+        const operation = async () => {
+          response = await fetch(input, { ...init, signal: controller.signal });
+          if (controller.signal.aborted) {
+            // A custom transport can deliver a response after the deadline won.
+            // Do not start a late body read or leave that response open.
+            await response.body?.cancel();
+            throw new DOMException("Source request timed out", "AbortError");
+          }
+          let text = "";
+          if (readText && response.ok) {
+            requestPhase = "body";
+            text = await response.text();
+          } else if (!response.ok && (readText || (retryableStatusCodes.includes(response.status) && attempt < maxRetries))) {
+            // Release unsuccessful responses before retrying or yielding the connection slot.
+            await response.body?.cancel();
+          }
+          return { response, text };
+        };
+        const value = await Promise.race([operation(), deadline]);
+        diagnostic = {
+          attempt: attempt + 1, elapsedMs: Date.now() - startedAt,
+          requestPhase, outcome: "http", httpStatus: value.response.status
+        };
+        return value;
+      } catch (error) {
+        diagnostic = {
+          attempt: attempt + 1, elapsedMs: Date.now() - startedAt, requestPhase,
+          outcome: controller.signal.aborted || isTimeoutError(error) ? "timeout" : "network",
+          ...(response ? { httpStatus: response.status } : {}),
+          ...transportDiagnostic(error)
+        };
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+        if (diagnostic) options?.onAttempt?.(diagnostic);
+      }
+    };
     try {
-      response = await fetch(input, {
-        ...init,
-        signal: controller.signal
-      });
+      result = options?.scheduleAttempt ? await options.scheduleAttempt(request) : await request();
     } catch (error) {
       lastError = error;
 
       if (attempt >= maxRetries) {
-        throw classifyFailures ? toSourceHttpError(error, attempt + 1) : normalizeFetchError(error);
+        throw classifyFailures ? toSourceHttpError(error, attempt + 1, diagnostic) : normalizeFetchError(error);
       }
 
       await waitFor(backoffMs * (attempt + 1));
       continue;
-    } finally {
-      clearTimeout(timeout);
     }
 
+    const { response } = result;
     if (!response.ok && retryableStatusCodes.includes(response.status) && attempt < maxRetries) {
       const retryAfterMs = respectRetryAfter
         ? parseRetryAfterMs(response.headers?.get("Retry-After"))
@@ -79,7 +153,7 @@ export async function fetchWithRetry(
       continue;
     }
 
-    return response;
+    return result;
   }
 
   throw classifyFailures
@@ -96,9 +170,9 @@ export function parseRetryAfterMs(value: string | null | undefined, nowMs = Date
   return Math.max(0, retryAt - nowMs);
 }
 
-function toSourceHttpError(error: unknown, attempts: number): SourceHttpError {
+function toSourceHttpError(error: unknown, attempts: number, diagnostic?: SourceHttpAttemptDiagnostic): SourceHttpError {
   if (error instanceof SourceHttpError) return error;
-  const timeout = error instanceof Error && error.name === "AbortError";
+  const timeout = diagnostic?.outcome === "timeout" || isTimeoutError(error);
   return new SourceHttpError(
     timeout ? "timeout" : "network",
     timeout
@@ -107,8 +181,31 @@ function toSourceHttpError(error: unknown, attempts: number): SourceHttpError {
         ? error.message
         : "Unknown source network failure",
     attempts,
-    error
+    error,
+    diagnostic
   );
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
+}
+
+const TRANSPORT_CODES = new Set([
+  "ENOTFOUND", "EAI_AGAIN", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT",
+  "ENETUNREACH", "EHOSTUNREACH", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT", "UND_ERR_SOCKET", "CERT_HAS_EXPIRED", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"
+]);
+
+export function safeTransportCode(value: unknown): string | undefined {
+  return typeof value === "string" && TRANSPORT_CODES.has(value) ? value : undefined;
+}
+
+function transportDiagnostic(error: unknown): { transportCode?: string } {
+  if (!(error instanceof Error)) return {};
+  const cause = error.cause;
+  const code = safeTransportCode((error as Error & { code?: unknown }).code) ??
+    safeTransportCode(cause && typeof cause === "object" && "code" in cause ? cause.code : undefined);
+  return code ? { transportCode: code } : {};
 }
 
 function normalizeFetchError(error: unknown): Error {

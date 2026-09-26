@@ -1,5 +1,7 @@
 import { AppError } from "../../lib/errors";
-import { fetchWithRetry, SourceHttpError } from "./http";
+import { logger } from "../../lib/logging";
+import { fetchTextWithRetry, SourceHttpError, type SourceHttpAttemptDiagnostic } from "./http";
+import { scheduleArxivRequest } from "./arxiv-request-scheduler";
 import type { DailySourceAdapter, DailySourceAdapterCandidate, UtcDayWindow } from "./types";
 
 const ARXIV_API_BASE = "https://export.arxiv.org/api/query";
@@ -61,10 +63,10 @@ export class ArxivSourceAdapter implements DailySourceAdapter {
 
     const byExternalId = new Map<string, DailySourceAdapterCandidate>();
 
-    for (const scope of this.categoryScopes) {
+    for (const [categoryIndex, scope] of this.categoryScopes.entries()) {
       for (let page = 0; page < this.maxPages; page += 1) {
         const start = page * ARXIV_PAGE_SIZE;
-        const feed = await this.fetchFeedForCategory(scope, start, ARXIV_PAGE_SIZE);
+        const feed = await this.fetchFeedForCategory(scope, categoryIndex + 1, start, ARXIV_PAGE_SIZE);
         const entries = parseArxivFeed(feed);
 
         if (entries.length === 0) {
@@ -87,14 +89,34 @@ export class ArxivSourceAdapter implements DailySourceAdapter {
     return Array.from(byExternalId.values());
   }
 
-  private async fetchFeedForCategory(category: string, start: number, maxResults: number): Promise<string> {
+  private async fetchFeedForCategory(category: string, categoryIndex: number, start: number, maxResults: number): Promise<string> {
     const url =
       `${ARXIV_API_BASE}?search_query=cat:${encodeURIComponent(category)}` +
       `&sortBy=submittedDate&sortOrder=descending&start=${start}&max_results=${maxResults}`;
 
-    let response: Response;
+    const startedAt = Date.now();
+    const context = {
+      endpointHost: "export.arxiv.org",
+      categoryIndex,
+      page: Math.floor(start / ARXIV_PAGE_SIZE) + 1,
+      start,
+      timeoutMs: this.timeoutMs
+    };
+    let lastAttempt: SourceHttpAttemptDiagnostic | undefined;
+    const failureDetails = () => ({
+      ...context,
+      elapsedMs: Date.now() - startedAt,
+      ...(lastAttempt ? {
+        attempts: lastAttempt.attempt,
+        attemptElapsedMs: lastAttempt.elapsedMs,
+        requestPhase: lastAttempt.requestPhase,
+        ...(lastAttempt.httpStatus !== undefined ? { httpStatus: lastAttempt.httpStatus } : {}),
+        ...(lastAttempt.transportCode ? { transportCode: lastAttempt.transportCode } : {})
+      } : {})
+    });
+    let result: Awaited<ReturnType<typeof fetchTextWithRetry>>;
     try {
-      response = await fetchWithRetry(
+      result = await fetchTextWithRetry(
         url,
         {
           headers: {
@@ -107,7 +129,17 @@ export class ArxivSourceAdapter implements DailySourceAdapter {
           backoffMs: this.retryBackoffMs,
           respectRetryAfter: true,
           retryAfterCapMs: this.retryAfterCapMs,
-          classifyFailures: true
+          classifyFailures: true,
+          scheduleAttempt: scheduleArxivRequest,
+          onAttempt: (diagnostic) => {
+            lastAttempt = diagnostic;
+            const details = { source: this.source, ...context, ...diagnostic };
+            if (diagnostic.outcome !== "http" || (diagnostic.httpStatus ?? 0) >= 400) {
+              logger.warn("arXiv HTTP attempt", details);
+            } else {
+              logger.info("arXiv HTTP attempt", details);
+            }
+          }
         }
       );
     } catch (error) {
@@ -116,27 +148,26 @@ export class ArxivSourceAdapter implements DailySourceAdapter {
         "arXiv request failed",
         502,
         {
-          failureCategory: error instanceof SourceHttpError ? error.kind : "unknown",
-          attempts: error instanceof SourceHttpError ? error.attempts : undefined,
-          endpointHost: "export.arxiv.org"
+          ...failureDetails(),
+          failureCategory: error instanceof SourceHttpError ? error.kind : "unknown"
         }
       );
     }
 
-    if (!response.ok) {
+    if (!result.response.ok) {
       throw new AppError(
         "ARXIV_API_ERROR",
-        `arXiv API request failed with status ${response.status}`,
+        `arXiv API request failed with status ${result.response.status}`,
         502,
         {
-          failureCategory: classifyHttpFailure(response.status),
-          httpStatus: response.status,
-          endpointHost: "export.arxiv.org"
+          ...failureDetails(),
+          failureCategory: classifyHttpFailure(result.response.status),
+          httpStatus: result.response.status
         }
       );
     }
 
-    return response.text();
+    return result.text;
   }
 }
 
