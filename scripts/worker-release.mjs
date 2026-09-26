@@ -56,7 +56,14 @@ export function bindingContract(version) {
       ? { name: binding.name, type: binding.type }
       : binding;
   }).sort((a, b) => a.name.localeCompare(b.name));
-  return { runtime: resources.script_runtime, bindings };
+  let runtime = resources.script_runtime;
+  const assets = runtime.assets;
+  if (assets && typeof assets === "object" && !Array.isArray(assets)) {
+    // Cloudflare represents the root as "/"; legacy metadata omits base_path.
+    // Canonicalize only this nullable field, without changing the API snapshot.
+    runtime = { ...runtime, assets: { ...assets, base_path: assets.base_path ?? "/" } };
+  }
+  return { runtime, bindings };
 }
 
 function sameContract(left, right) {

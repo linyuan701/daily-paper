@@ -3,7 +3,7 @@ import test from "node:test";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { executeRelease, activeDeployment, annotationEvidence, cloudflareClient, healthProbe, validateMutationContext } from "./worker-release.mjs";
+import { executeRelease, activeDeployment, annotationEvidence, bindingContract, cloudflareClient, healthProbe, validateMutationContext } from "./worker-release.mjs";
 import { uploadConfig, inventory, verifyArtifact } from "./worker-release-artifact.mjs";
 
 const oldVersion = "11111111-1111-1111-1111-111111111111";
@@ -129,6 +129,141 @@ test("changed runtime, vars or secret names fail before switching traffic", asyn
     if (change === "vars") target.resources.bindings[2].text = "local";
     if (change === "secret") target.resources.bindings.push({ name: "NEW_SECRET", type: "secret_text" });
     await assert.rejects(executeRelease(f.input, f.deps), /VERSION_BINDING_OR_RUNTIME_DRIFT/);
+    assert.equal(f.writes.length, 0);
+  }
+});
+
+function assetsFixture(before = {}, after = { base_path: "/" }) {
+  const f = fixture();
+  for (const [id, assets] of [[oldVersion, before], [newVersion, after]]) {
+    f.versions.get(id).resources.script_runtime = {
+      ...runtime, usage_model: "standard",
+      assets: { serve_directly: false, raw_run_worker_first: true, ...assets }
+    };
+  }
+  return f;
+}
+
+test("root assets base paths are equivalent without mutating version metadata", async (t) => {
+  const roots = { missing: {}, undefined: { base_path: undefined }, null: { base_path: null }, root: { base_path: "/" } };
+  for (const [beforeName, before] of Object.entries(roots)) {
+    for (const [afterName, after] of Object.entries(roots)) {
+      await t.test(`${beforeName} -> ${afterName}`, async () => {
+        const f = assetsFixture(before, after);
+        const original = structuredClone(f.versions);
+        assert.deepEqual(bindingContract(f.versions.get(oldVersion)), bindingContract(f.versions.get(newVersion)));
+        assert.equal(bindingContract(f.versions.get(oldVersion)).runtime.assets.base_path, "/");
+        const result = await executeRelease(f.input, f.deps);
+        assert.equal(result.status, "verified");
+        assert.equal(f.writes.length, 1);
+        assert.deepEqual(f.versions, original);
+      });
+    }
+  }
+});
+
+test("non-root or invalid base paths still fail before switching traffic", async (t) => {
+  for (const before of [{}, { base_path: "/" }]) {
+    for (const path of ["/foo", "/assets", "/foo/", "//", "/./", " /", "", false, 0]) {
+      await t.test(`${before.base_path ?? "missing"} -> ${JSON.stringify(path)}`, async () => {
+        const f = assetsFixture(before, { base_path: path });
+        assert.equal(bindingContract(f.versions.get(newVersion)).runtime.assets.base_path, path);
+        await assert.rejects(executeRelease(f.input, f.deps), /VERSION_BINDING_OR_RUNTIME_DRIFT/);
+        assert.equal(f.writes.length, 0);
+      });
+    }
+  }
+});
+
+test("equal root paths do not hide other assets, runtime or binding drift", async (t) => {
+  const changes = {
+    "assets serve_directly": (r) => { r.script_runtime.assets.serve_directly = true; },
+    "assets raw_run_worker_first": (r) => { r.script_runtime.assets.raw_run_worker_first = false; },
+    "assets extra field": (r) => { r.script_runtime.assets.html_handling = "none"; },
+    "assets removed field": (r) => { delete r.script_runtime.assets.serve_directly; },
+    "compatibility date": (r) => { r.script_runtime.compatibility_date = "2026-09-26"; },
+    "compatibility flags": (r) => { r.script_runtime.compatibility_flags = ["nodejs_compat", "no_nodejs_compat_v2"]; },
+    "usage model": (r) => { r.script_runtime.usage_model = "bundled"; },
+    "unknown runtime field": (r) => { r.script_runtime.new_runtime_field = true; },
+    "binding value": (r) => { r.bindings[2].text = "local"; },
+    "binding name": (r) => { r.bindings[1].name = "OTHER_SECRET"; },
+    "binding type": (r) => { r.bindings[1].type = "secret_key"; },
+    "binding removed": (r) => { r.bindings.pop(); }
+  };
+  for (const [name, change] of Object.entries(changes)) {
+    await t.test(name, async () => {
+      const f = assetsFixture({ base_path: "/" });
+      change(f.versions.get(newVersion).resources);
+      await assert.rejects(executeRelease(f.input, f.deps), /VERSION_BINDING_OR_RUNTIME_DRIFT/);
+      assert.equal(f.writes.length, 0);
+    });
+  }
+});
+
+test("a missing or malformed assets object is not synthesized into root assets", async () => {
+  for (const assets of [undefined, null, [], "", false, 0]) {
+    const f = assetsFixture();
+    if (assets === undefined) delete f.versions.get(oldVersion).resources.script_runtime.assets;
+    else f.versions.get(oldVersion).resources.script_runtime.assets = assets;
+    await assert.rejects(executeRelease(f.input, f.deps), /VERSION_BINDING_OR_RUNTIME_DRIFT/);
+    assert.equal(f.writes.length, 0);
+  }
+});
+
+test("sanitized production metadata supports deploy, rollback, dry-run and recovery", async () => {
+  // GET version metadata rechecked on 2026-09-26: old assets omitted base_path;
+  // the #49 upload returned "/". Keep only runtime and binding names/types/vars.
+  const bindings = [
+    { name: "ASSETS", type: "assets" },
+    ...["ACCESS_ALLOWED_EMAIL", "DAILY_SCHEDULER_GITHUB_TOKEN", "DATABASE_URL", "POLICY_AUD",
+      "SITE_READ_ACCESS_CLIENT_ID", "SITE_READ_POLICY_AUD", "TEAM_DOMAIN"].map((name) => ({ name, type: "secret_text" })),
+    { name: "DAILY_PAPER_RUNTIME_TARGET", type: "plain_text", text: "cloudflare" },
+    { name: "DEPLOYMENT_MODE", type: "plain_text", text: "cloud" },
+    { name: "NEXT_PUBLIC_DEPLOYMENT_MODE", type: "plain_text", text: "cloud" }
+  ];
+  for (const scenario of ["deploy", "rollback", "dry-run", "recovery"]) {
+    const f = assetsFixture();
+    for (const v of f.versions.values()) v.resources.bindings = structuredClone(bindings);
+    if (scenario === "rollback" || scenario === "dry-run") {
+      f.input.mode = "rollback";
+      f.input.dryRun = scenario === "dry-run";
+      f.setActive(deployment(newDeployment, newVersion));
+      f.input.expectedDeployment = newDeployment;
+      f.deps.upload = async () => assert.fail("rollback must not upload");
+    }
+    if (scenario === "recovery") {
+      let probes = 0;
+      f.deps.probe = async () => {
+        if (++probes === 2) throw new Error("CRITICAL_API_FAILED");
+        return [{ status: 200 }];
+      };
+      await assert.rejects(executeRelease(f.input, f.deps), /CRITICAL_API_FAILED/);
+      assert.deepEqual(f.writes.map((body) => body.versions[0].version_id), [newVersion, oldVersion]);
+      assert.equal(f.saves.at(-1).recovery.id, recoveryDeployment);
+    } else {
+      const result = await executeRelease(f.input, f.deps);
+      assert.equal(result.status, scenario === "dry-run" ? "read_only_verified" : "verified");
+      assert.equal(f.writes.length, scenario === "dry-run" ? 0 : 1);
+      assert.equal(result.active.versions[0].version_id, scenario === "rollback" ? oldVersion : newVersion);
+    }
+  }
+});
+
+test("root canonicalization does not hide concurrent Cron, runtime or subdomain drift", async () => {
+  for (const field of ["cron", "runtime", "subdomain"]) {
+    const f = assetsFixture();
+    let drift = false;
+    const originalCf = f.deps.cf;
+    f.deps.cf = async (path, body) => {
+      const response = await originalCf(path, body);
+      if (drift && path === "/schedules" && field === "cron") response.schedules[0].cron = "0 0 * * *";
+      if (drift && path === "/subdomain" && field === "subdomain") response.previews_enabled = true;
+      if (drift && path === `/versions/${oldVersion}` && field === "runtime") response.resources.script_runtime.assets.serve_directly = true;
+      return response;
+    };
+    f.deps.verify = async () => { drift = true; return { source_sha: sha }; };
+    f.deps.upload = async () => assert.fail("must not upload after boundary drift");
+    await assert.rejects(executeRelease(f.input, f.deps), /PRODUCTION_BOUNDARY_CHANGED/);
     assert.equal(f.writes.length, 0);
   }
 });
