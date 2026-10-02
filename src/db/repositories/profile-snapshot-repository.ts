@@ -231,6 +231,43 @@ export class PrismaProfileSnapshotRepository implements ProfileSnapshotRepositor
     }>;
     summaryJson: Record<string, unknown>;
   }) {
+    // Prepare bulk rows before opening the transaction so its budget covers database work.
+    const data: Prisma.ProfileSnapshotCreateInput = {
+      status: "ACTIVE",
+      sourceLibraryVersion: input.sourceLibraryVersion ?? null,
+      itemsCount: input.items.length,
+      summaryJson: input.summaryJson as Prisma.InputJsonValue,
+      itemSignals: {
+        createMany: {
+          data: input.items.map((item) => ({
+            itemId: item.itemId,
+            segment: toDbSegment(item.segment),
+            finalWeight: item.finalWeight,
+            collectionWeight: item.collectionWeight,
+            attentionWeight: item.attentionWeight,
+            recencyWeight: item.recencyWeight,
+            representationSource: toDbRepresentationSource(item.representationSource),
+            contentRecallLabel: item.contentRecallLabel ?? null,
+            researchCategory: item.researchCategory
+              ? toDbResearchCategory(item.researchCategory)
+              : null,
+            representationText: item.representationText
+          }))
+        }
+      },
+      researchTypePreferences: {
+        createMany: {
+          data: input.researchPreferences.map((entry) => ({
+            category: toDbResearchCategory(entry.category),
+            weight: entry.weight,
+            itemCount: entry.itemCount
+          }))
+        }
+      }
+    };
+
+    // Match other bulk pipeline writes: remote PostgreSQL can exceed Prisma's 5s default.
+    // Keep superseding the previous snapshot and creating all replacement rows atomic.
     const snapshot = await this.db.$transaction(async (tx) => {
       await tx.profileSnapshot.updateMany({
         where: {
@@ -242,44 +279,12 @@ export class PrismaProfileSnapshotRepository implements ProfileSnapshotRepositor
       });
 
       return tx.profileSnapshot.create({
-        data: {
-          status: "ACTIVE",
-          sourceLibraryVersion: input.sourceLibraryVersion ?? null,
-          itemsCount: input.items.length,
-          summaryJson: input.summaryJson as Prisma.InputJsonValue,
-          itemSignals: {
-            createMany: {
-              data: input.items.map((item) => ({
-                itemId: item.itemId,
-                segment: toDbSegment(item.segment),
-                finalWeight: item.finalWeight,
-                collectionWeight: item.collectionWeight,
-                attentionWeight: item.attentionWeight,
-                recencyWeight: item.recencyWeight,
-                representationSource: toDbRepresentationSource(item.representationSource),
-                contentRecallLabel: item.contentRecallLabel ?? null,
-                researchCategory: item.researchCategory
-                  ? toDbResearchCategory(item.researchCategory)
-                  : null,
-                representationText: item.representationText
-              }))
-            }
-          },
-          researchTypePreferences: {
-            createMany: {
-              data: input.researchPreferences.map((entry) => ({
-                category: toDbResearchCategory(entry.category),
-                weight: entry.weight,
-                itemCount: entry.itemCount
-              }))
-            }
-          }
-        },
+        data,
         include: {
           researchTypePreferences: true
         }
       });
-    });
+    }, { timeout: 60_000 });
 
     return mapSnapshotSummary(snapshot);
   }

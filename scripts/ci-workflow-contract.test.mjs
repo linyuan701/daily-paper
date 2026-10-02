@@ -99,3 +99,10 @@ test("Worker preview cannot inherit a database URL and verifies fail-closed acce
   assert.match(preview, /node scripts\/cloudflare-artifact-contract\.mjs/);
   assert.match(preview, /node scripts\/cloudflare-preview-smoke\.mjs/);
 });
+
+
+test("PostgreSQL CI runs the slow profile snapshot transaction regression", () => {
+  const migration = ci.slice(ci.indexOf("  migration:"));
+  assert.match(migration, /TEST_POSTGRES_DATABASE_URL: postgresql:\/\/ci_user:ci_password@127\.0\.0\.1:5432\/daily_paper_ci/);
+  assert.match(migration, /src\/db\/repositories\/profile-snapshot-postgresql\.integration\.test\.ts/);
+});
