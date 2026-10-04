@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createRequire } from "node:module";
 import nodemailer from "nodemailer";
 
 import { buildDailyNotification, sendDailyNotification } from "./daily-notifier.mjs";
@@ -122,7 +123,7 @@ test("renders complete-with-warnings distinctly from partial and failed", () => 
   assert.notEqual(warning.title, failed.title);
 });
 
-test("Nodemailer 9 renders the production message shape without network access", async () => {
+test("Nodemailer renders the production message shape without network access", async () => {
   const transport = nodemailer.createTransport({
     streamTransport: true,
     buffer: true,
@@ -149,4 +150,55 @@ test("Nodemailer 9 renders the production message shape without network access",
   assert.match(rendered, /To: operator@example\.test/);
   assert.match(rendered, /Content-Type: multipart\/alternative/);
   assert.match(rendered, /arxiv/);
+});
+
+test("Nodemailer preserves SMTP options through the production dynamic import", async () => {
+  const { default: importedMailer } = await import("nodemailer");
+  let smtp;
+  const result = await sendDailyNotification({
+    notification,
+    env: {
+      NOTIFICATION_SMTP_HOST: "smtp.example.test",
+      NOTIFICATION_SMTP_PORT: "587",
+      NOTIFICATION_SMTP_SECURE: "false",
+      NOTIFICATION_SMTP_USER: "fixture-user",
+      NOTIFICATION_SMTP_PASS: "fixture-password",
+      NOTIFICATION_EMAIL_FROM: "daily-paper@example.test",
+      NOTIFICATION_EMAIL_TO: "operator@example.test"
+    },
+    createTransport: (options) => {
+      // Construct the real SMTP transport without opening a connection.
+      smtp = importedMailer.createTransport(options);
+      const stream = importedMailer.createTransport({ streamTransport: true, buffer: true });
+      return { sendMail: (message) => stream.sendMail(message) };
+    }
+  });
+  assert.equal(result.status, "sent");
+  assert.equal(smtp.transporter.options.host, "smtp.example.test");
+  assert.equal(smtp.transporter.options.port, 587);
+  assert.equal(smtp.transporter.options.secure, false);
+  assert.deepEqual(smtp.transporter.options.auth, { user: "fixture-user", pass: "fixture-password" });
+  smtp.close();
+});
+
+test("Nodemailer ESM and CommonJS keep quoted names and recipient groups in offline envelopes", async () => {
+  const commonJsMailer = createRequire(import.meta.url)("nodemailer");
+  for (const mailer of [nodemailer, commonJsMailer]) {
+    const transport = mailer.createTransport({ streamTransport: true, buffer: true });
+    const output = await transport.sendMail({
+      from: '"Daily Paper, Research" <daily-paper@example.test>',
+      to: '"Operator, One" <one@example.test>, Research: two@example.test, three@example.test;',
+      subject: notification.title,
+      text: "Offline compatibility fixture",
+      html: "<p>Offline compatibility fixture</p>"
+    });
+    assert.deepEqual(output.envelope, {
+      from: "daily-paper@example.test",
+      to: ["one@example.test", "two@example.test", "three@example.test"]
+    });
+    const rendered = output.message.toString("utf8");
+    assert.match(rendered, /Subject: =\?UTF-8\?/i);
+    assert.match(rendered, /Content-Type: multipart\/alternative/);
+    transport.close();
+  }
 });
