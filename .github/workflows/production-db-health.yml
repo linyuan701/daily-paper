@@ -1,0 +1,42 @@
+name: Read-only production database health
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-paper-production-db-health
+  cancel-in-progress: false
+
+jobs:
+  health:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 5
+    steps:
+      - name: Check out reviewed dispatch commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --fund=false
+      - name: Generate PostgreSQL client without production credentials
+        env:
+          DATABASE_URL: postgresql://placeholder:placeholder@database.invalid/health_client_generation
+        run: npm run prisma:cloud:generate
+      - name: Validate offline safety contracts
+        run: node --test scripts/production-db-health.test.mjs
+      - name: Run one bounded read-only authentication query
+        timeout-minutes: 1
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: timeout --signal=TERM --kill-after=2s 20s node scripts/production-db-health.mjs
