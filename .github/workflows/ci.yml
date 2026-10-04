@@ -64,6 +64,7 @@ jobs:
       - name: Test configuration and workflow contracts
         run: |
           npm run test:config
+          node --test scripts/production-db-health.test.mjs
           node --test scripts/daily-workflow.test.mjs scripts/profile-workflow.test.mjs scripts/cloudflare-contract.test.mjs scripts/cloudflare-artifact-contract.test.mjs scripts/cloudflare-final-bundle-contract.test.mjs scripts/ci-migration-check.test.mjs scripts/ci-workflow-contract.test.mjs scripts/production-audit-check.test.mjs
 
       - name: Validate Local Mode contracts
@@ -168,6 +169,11 @@ jobs:
 
       - name: Generate Prisma clients for PostgreSQL integration tests
         run: npm run prisma:generate:all
+
+      - name: Test read-only health on the disposable database
+        env:
+          TEST_POSTGRES_DATABASE_URL: postgresql://ci_user:ci_password@127.0.0.1:5432/daily_paper_ci
+        run: node --test scripts/production-db-health.test.mjs
 
       - name: Test bulk persistence and profile replacement on PostgreSQL
         env:
