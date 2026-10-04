@@ -169,13 +169,14 @@ jobs:
       - name: Generate Prisma clients for PostgreSQL integration tests
         run: npm run prisma:generate:all
 
-      - name: Test normalization and ranking batching on PostgreSQL
+      - name: Test bulk persistence and profile replacement on PostgreSQL
         env:
           TEST_POSTGRES_DATABASE_URL: postgresql://ci_user:ci_password@127.0.0.1:5432/daily_paper_ci
         run: >-
           npx vitest run
           src/db/repositories/candidate-normalization-postgresql.integration.test.ts
           src/db/repositories/ranking-result-persistence-postgresql.integration.test.ts
+          src/db/repositories/profile-snapshot-postgresql.integration.test.ts
           --pool=threads
 
       - name: Verify commands preserve tracked checkout
