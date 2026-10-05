@@ -91,6 +91,17 @@ export type ArxivFailureDiagnostic = {
     | "http_error"
     | "unknown";
   retryable: boolean;
+  endpointHost?: "export.arxiv.org";
+  categoryIndex?: number;
+  page?: number;
+  start?: number;
+  attempts?: number;
+  elapsedMs?: number;
+  attemptElapsedMs?: number;
+  timeoutMs?: number;
+  requestPhase?: "headers" | "body";
+  httpStatus?: number;
+  transportCode?: string;
 };
 
 export type JournalFeedSourceRecord = {

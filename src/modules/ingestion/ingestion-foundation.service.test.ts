@@ -415,6 +415,38 @@ describe("DefaultDailyIngestionService", () => {
 
   });
 
+  it("persists request diagnostics while preserving failed source watermarks and other sources", async () => {
+    const repository = new FakeRepository();
+    const oldWatermark = new Date("2026-03-05T23:59:59.999Z");
+    repository.seedCursor("arxiv", oldWatermark);
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    const evidence = {
+      endpointHost: "export.arxiv.org", categoryIndex: 2, page: 3, start: 200,
+      attempts: 3, elapsedMs: 105000, attemptElapsedMs: 20000, timeoutMs: 20000,
+      requestPhase: "headers", transportCode: "ETIMEDOUT"
+    };
+    const service = new DefaultDailyIngestionService(createAdapterMap([
+      { source: "arxiv", async fetchCandidatesForDay() {
+        throw new AppError("ARXIV_API_ERROR", "private upstream body", 502, {
+          ...evidence, failureCategory: "timeout", responseBody: "private"
+        });
+      } },
+      { source: "pubmed", async fetchCandidatesForDay() {
+        return [{ externalId: "fixture", publishedAt: new Date("2026-03-07T12:00:00Z"),
+          indexedAt: new Date("2026-03-07T12:00:00Z"), sourcePayload: {}, authors: [] }];
+      } }
+    ]), repository);
+    const result = await service.runAggregatedIngestion({ runDate: "2026-03-07", sources: ["arxiv", "pubmed"] });
+    expect(result.sourceSummaries[0]).toMatchObject({
+      source: "arxiv", status: "failed", candidatesCount: 0, diagnostic: evidence
+    });
+    expect(repository.pipelineInitialization?.ingestionDetails.sources).toEqual(result.sourceSummaries);
+    expect(await repository.getSourceCursor("arxiv")).toEqual(oldWatermark);
+    expect(await repository.getSourceCursor("pubmed")).toEqual(new Date("2026-03-07T23:59:59.999Z"));
+    expect(result.candidates.map(candidate => candidate.source)).toEqual(["pubmed"]);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("private");
+  });
+
   it("uses first-seen journal IDs after a bounded bootstrap", async () => {
     const repository = new FakeRepository();
     const adapter: DailySourceAdapter = {
